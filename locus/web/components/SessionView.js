@@ -62,6 +62,223 @@ function KeyMomentCard({ moment }) {
   );
 }
 
+function buildNudgeQuestions(moments) {
+  const questions = [];
+  if (moments.find(m => m.type === 'slow_start')) {
+    questions.push({
+      id: 'slow_start',
+      question: 'You had a slow start — what do you think contributed?',
+      options: ['rushed morning', 'poor sleep', 'felt distracted', 'nothing unusual'],
+    });
+  }
+  if (moments.find(m => m.type === 'deep_focus_streak')) {
+    questions.push({
+      id: 'deep_focus',
+      question: 'You hit a strong focus streak — what helped?',
+      options: ['no distractions', 'interesting task', 'good conditions', 'momentum'],
+    });
+  }
+  if (moments.find(m => m.type === 'distraction')) {
+    questions.push({
+      id: 'distraction',
+      question: 'There were some distractions — what caused them?',
+      options: ['notifications', 'environment', 'task fatigue', 'unclear next step'],
+    });
+  }
+  if (moments.find(m => m.type === 'recovery')) {
+    questions.push({
+      id: 'recovery',
+      question: 'You recovered well from a dip — what helped?',
+      options: ['took a break', 'task switch', 'self-discipline', 'removed distraction'],
+    });
+  }
+  return questions;
+}
+
+function SessionComplete({ session, moments, experiments, initialTags, onSubmit }) {
+  const [tags, setTags] = useState(initialTags || []);
+  const [absentExps, setAbsentExps] = useState(new Set());
+  const [reflections, setReflections] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+
+  const score = session.avg_focus ? Math.round(session.avg_focus) : null;
+  const nudgeQuestions = buildNudgeQuestions(moments);
+
+  function toggleTag(tag) {
+    setTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  }
+
+  function handleExpPresent(exp) {
+    setTags(prev => prev.includes(exp.tag) ? prev.filter(t => t !== exp.tag) : [...prev, exp.tag]);
+    setAbsentExps(prev => { const s = new Set(prev); s.delete(exp.id); return s; });
+  }
+
+  function handleExpAbsent(exp) {
+    setTags(prev => prev.filter(t => t !== exp.tag));
+    setAbsentExps(prev => {
+      const s = new Set(prev);
+      if (s.has(exp.id)) s.delete(exp.id);
+      else s.add(exp.id);
+      return s;
+    });
+  }
+
+  async function handleSubmit() {
+    setSubmitting(true);
+    const absentExpTags = experiments.filter(e => absentExps.has(e.id)).map(e => e.tag);
+    await onSubmit(tags, absentExpTags);
+  }
+
+  return (
+    <div className="max-w-xl mx-auto py-8">
+      {/* Session summary */}
+      <div className="card p-6 mb-6">
+        <div className="flex items-end justify-between mb-2">
+          <div>
+            <p className="font-lora text-xl mb-0.5" style={{ color: '#1A1917' }}>Session complete</p>
+            <p className="text-xs" style={{ color: '#A09E99', fontFamily: '"DM Mono", monospace' }}>
+              {formatTime(session.started_at)}
+              {session.ended_at ? ` → ${formatTime(session.ended_at)}` : ''}
+              {' · '}{formatDuration(session.duration_seconds)}
+              {session.capture_count ? ` · ${session.capture_count} captures` : ''}
+            </p>
+          </div>
+          {score !== null && (
+            <div className="text-right">
+              <p className="font-lora font-medium" style={{ fontSize: '2.5rem', lineHeight: 1, color: scoreColor(score) }}>
+                {score}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>avg focus</p>
+            </div>
+          )}
+        </div>
+        {session.peak_focus && (
+          <p className="text-xs" style={{ color: '#6B6A65' }}>
+            Peak: <span style={{ fontFamily: '"DM Mono", monospace', color: '#1A1917' }}>{session.peak_focus}</span>
+          </p>
+        )}
+      </div>
+
+      {/* Conditions */}
+      <div className="card p-5 mb-4">
+        <p className="text-sm font-medium mb-0.5" style={{ color: '#1A1917' }}>What was present today?</p>
+        <p className="text-xs mb-3" style={{ color: '#A09E99' }}>Select all that applied</p>
+        <div className="flex flex-wrap gap-2">
+          {COMMON_TAGS.map(tag => {
+            const active = tags.includes(tag);
+            return (
+              <button
+                key={tag}
+                onClick={() => toggleTag(tag)}
+                className="px-3 py-1.5 rounded-full text-xs transition-all"
+                style={{
+                  background: active ? '#BA7517' : '#F5F4F0',
+                  color: active ? '#FFFFFF' : '#6B6A65',
+                  fontWeight: active ? 500 : 400,
+                }}
+              >
+                {tag.replace(/_/g, ' ')}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Experiments */}
+      {experiments.length > 0 && (
+        <div className="card p-5 mb-4">
+          <p className="text-sm font-medium mb-0.5" style={{ color: '#1A1917' }}>Experiment conditions</p>
+          <p className="text-xs mb-3" style={{ color: '#A09E99' }}>
+            Both "present" and "absent" sessions build your dataset. Leave blank if this session wasn't part of the experiment.
+          </p>
+          {experiments.map((exp, i) => {
+            const isPresent = tags.includes(exp.tag);
+            const isAbsent = absentExps.has(exp.id);
+            const c = exp.correlation;
+            return (
+              <div
+                key={exp.id}
+                className="flex items-center justify-between py-2.5"
+                style={{ borderBottom: i < experiments.length - 1 ? '0.5px solid rgba(0,0,0,0.06)' : 'none' }}
+              >
+                <div>
+                  <p className="text-sm" style={{ color: '#1A1917' }}>{exp.name}</p>
+                  <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>
+                    {c?.sessions_with ?? 0} present · {c?.sessions_without ?? 0} absent so far
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleExpPresent(exp)}
+                    className="px-3 py-1 rounded-full text-xs font-medium transition-all"
+                    style={{
+                      background: isPresent ? '#1D9E75' : '#F5F4F0',
+                      color: isPresent ? '#FFFFFF' : '#6B6A65',
+                    }}
+                  >
+                    Present
+                  </button>
+                  <button
+                    onClick={() => handleExpAbsent(exp)}
+                    className="px-3 py-1 rounded-full text-xs font-medium transition-all"
+                    style={{
+                      background: isAbsent ? '#6B6A65' : '#F5F4F0',
+                      color: isAbsent ? '#FFFFFF' : '#6B6A65',
+                    }}
+                  >
+                    Absent
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Reflection */}
+      {nudgeQuestions.length > 0 && (
+        <div className="card p-5 mb-6">
+          <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Quick reflection</p>
+          {nudgeQuestions.map((q, i) => (
+            <div key={q.id} className={i < nudgeQuestions.length - 1 ? 'mb-4' : ''}>
+              <p className="text-sm mb-2" style={{ color: '#6B6A65' }}>{q.question}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {q.options.map(opt => (
+                  <button
+                    key={opt}
+                    onClick={() => setReflections(prev => ({ ...prev, [q.id]: opt }))}
+                    className="px-2.5 py-1 rounded-full text-xs transition-all"
+                    style={{
+                      background: reflections[q.id] === opt ? '#BA7517' : '#F5F4F0',
+                      color: reflections[q.id] === opt ? '#FFFFFF' : '#6B6A65',
+                    }}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        onClick={handleSubmit}
+        disabled={submitting}
+        className="w-full py-3 rounded-component text-sm font-medium transition-opacity"
+        style={{
+          background: '#BA7517',
+          color: '#FFFFFF',
+          opacity: submitting ? 0.6 : 1,
+          cursor: submitting ? 'not-allowed' : 'pointer',
+        }}
+      >
+        {submitting ? 'Saving…' : 'Done — start new session →'}
+      </button>
+    </div>
+  );
+}
+
 function LocusNudge({ moments, sessionAvg, globalAvg }) {
   const nudges = [];
 
@@ -134,9 +351,7 @@ function ExperimentUpdateCard({ exp, prevR, highlighted }) {
   }
 
   return (
-    <div
-      className={`card p-3 mb-2 transition-all ${highlighted ? 'pulse-amber' : ''}`}
-    >
+    <div className={`card p-3 mb-2 transition-all ${highlighted ? 'pulse-amber' : ''}`}>
       <div className="flex items-start justify-between mb-1.5">
         <p className="text-sm font-medium" style={{ color: '#1A1917' }}>{exp.name}</p>
         <span
@@ -167,7 +382,7 @@ function ExperimentUpdateCard({ exp, prevR, highlighted }) {
 }
 
 export default function SessionView() {
-  const { currentSession, latestCapture, experiments } = useWs();
+  const { currentSession, setCurrentSession, latestCapture, experiments } = useWs();
   const [arc, setArc] = useState([]);
   const [globalArc, setGlobalArc] = useState([]);
   const [moments, setMoments] = useState([]);
@@ -177,6 +392,7 @@ export default function SessionView() {
 
   // Webcam tracking state
   const [trackerActive, setTrackerActive] = useState(false);
+  const [postSessionActive, setPostSessionActive] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cameraError, setCameraError] = useState(null);
   const webcamDisplayRef = useRef(null);
@@ -184,15 +400,29 @@ export default function SessionView() {
   const streamRef = useRef(null);
   const captureIntervalRef = useRef(null);
   const trackingSessionIdRef = useRef(null);
+  const postSessionIdRef = useRef(null);
 
   const sessionId = currentSession?.id;
+  const isComplete = currentSession && currentSession.ended_at;
 
-  // Attach stream to display video after trackerActive triggers a re-render
+  // Attach stream to video element — fires on trackerActive change AND when currentSession
+  // is first set (because the video element only mounts after currentSession becomes non-null)
   useEffect(() => {
     if (trackerActive && webcamDisplayRef.current && streamRef.current) {
       webcamDisplayRef.current.srcObject = streamRef.current;
     }
-  }, [trackerActive]);
+  }, [trackerActive, sessionId]);
+
+  // If session ends externally (e.g. Python tracker), stop the webcam stream
+  useEffect(() => {
+    if (isComplete && trackerActive) {
+      clearInterval(captureIntervalRef.current);
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      trackingSessionIdRef.current = null;
+      setTrackerActive(false);
+    }
+  }, [isComplete]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -220,7 +450,6 @@ export default function SessionView() {
 
       setTrackerActive(true);
 
-      // First capture after 2s (camera warm-up), then every 10s
       setTimeout(() => captureAndSend(), 2000);
       captureIntervalRef.current = setInterval(() => captureAndSend(), CAPTURE_INTERVAL_MS);
     } catch (e) {
@@ -236,6 +465,11 @@ export default function SessionView() {
     const video = webcamDisplayRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !trackingSessionIdRef.current) return;
+    // Fallback: set srcObject if the useEffect fired before the video element mounted
+    if (!video.srcObject && streamRef.current) {
+      video.srcObject = streamRef.current;
+    }
+    if (!video.srcObject) return;
 
     canvas.width = 640;
     canvas.height = 480;
@@ -265,16 +499,11 @@ export default function SessionView() {
       streamRef.current = null;
     }
 
-    if (trackingSessionIdRef.current) {
-      await fetch('/api/session/end', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: trackingSessionIdRef.current }),
-      }).catch(() => {});
-      trackingSessionIdRef.current = null;
-    }
+    postSessionIdRef.current = trackingSessionIdRef.current;
+    trackingSessionIdRef.current = null;
 
     setTrackerActive(false);
+    setPostSessionActive(true);
   }
 
   // Fetch arc + moments when session changes
@@ -291,20 +520,31 @@ export default function SessionView() {
     setTags(currentSession?.tags || []);
   }, [sessionId]);
 
-  // Refresh arc live on new captures
+  // Refresh arc + moments on each new capture (via WS)
   useEffect(() => {
     if (!sessionId || !latestCapture) return;
     fetch(`/api/session/${sessionId}/arc`)
       .then(r => r.json())
-      .then(({ arc: a }) => setArc(a || [])
-      ).catch(() => {});
+      .then(({ arc: a }) => setArc(a || [])).catch(() => {});
     fetch(`/api/session/${sessionId}/moments`)
       .then(r => r.json())
-      .then(({ moments: m }) => setMoments(m || [])
-      ).catch(() => {});
+      .then(({ moments: m }) => setMoments(m || [])).catch(() => {});
   }, [latestCapture]);
 
-  // Fetch global average arc (all-time per minute avg)
+  // Poll arc + moments every 10s while webcam is active (fallback if WS chain breaks)
+  useEffect(() => {
+    if (!sessionId || !trackerActive) return;
+    const poll = setInterval(() => {
+      fetch(`/api/session/${sessionId}/arc`)
+        .then(r => r.json())
+        .then(({ arc: a }) => { if (a?.length) setArc(a); }).catch(() => {});
+      fetch(`/api/session/${sessionId}/moments`)
+        .then(r => r.json())
+        .then(({ moments: m }) => setMoments(m || [])).catch(() => {});
+    }, 10_000);
+    return () => clearInterval(poll);
+  }, [sessionId, trackerActive]);
+
   useEffect(() => {
     fetch('/api/history')
       .then(r => r.json())
@@ -323,9 +563,7 @@ export default function SessionView() {
       const old = prevExperiments[exp.id];
       const r = exp.correlation?.r;
       newPrev[exp.id] = r;
-      if (old !== undefined && old !== r) {
-        newHighlights.add(exp.id);
-      }
+      if (old !== undefined && old !== r) newHighlights.add(exp.id);
     }
     if (newHighlights.size > 0) {
       setHighlightedExps(newHighlights);
@@ -352,24 +590,26 @@ export default function SessionView() {
   const score = currentSession?.avg_focus ? Math.round(currentSession.avg_focus) : null;
   const isActive = currentSession && !currentSession.ended_at;
 
-  // Chart data
-  const arcLabels = arc.map(p => `${p.minute}m`);
+  // Chart data — arc is now per-capture with elapsed seconds
+  const arcLabels = arc.map(p => {
+    const e = p.elapsed ?? (p.minute * 60);
+    const m = Math.floor(e / 60);
+    return m > 0 ? `${m}m` : `${e}s`;
+  });
   const arcData = arc.map(p => p.avg_focus);
   const chartData = {
     labels: arcLabels,
-    datasets: [
-      {
-        label: 'This session',
-        data: arcData,
-        borderColor: '#BA7517',
-        backgroundColor: 'rgba(186,117,23,0.08)',
-        fill: true,
-        tension: 0.35,
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-      },
-    ],
+    datasets: [{
+      label: 'This session',
+      data: arcData,
+      borderColor: '#BA7517',
+      backgroundColor: 'rgba(186,117,23,0.08)',
+      fill: true,
+      tension: 0.35,
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+    }],
   };
   const chartOptions = {
     responsive: true,
@@ -391,9 +631,9 @@ export default function SessionView() {
     },
   };
 
-  // Hidden canvas for frame capture (always mounted)
   const hiddenCapture = <canvas ref={canvasRef} style={{ display: 'none' }} />;
 
+  // ── No active session ─────────────────────────────────────────────────────
   if (!currentSession) {
     return (
       <>
@@ -417,9 +657,7 @@ export default function SessionView() {
             {starting ? 'Starting…' : 'Start session'}
           </button>
           {cameraError && (
-            <p className="text-sm mt-4" style={{ color: '#993C1D' }}>
-              Camera error: {cameraError}
-            </p>
+            <p className="text-sm mt-4" style={{ color: '#993C1D' }}>Camera error: {cameraError}</p>
           )}
           <p className="text-xs mt-6" style={{ color: '#A09E99' }}>
             or run <code style={{ fontFamily: '"DM Mono", monospace' }}>python tracker/main.py</code> in your terminal
@@ -429,6 +667,65 @@ export default function SessionView() {
     );
   }
 
+  // ── Post-session form (webcam stopped by user, session not yet ended) ─────
+  if (postSessionActive && currentSession) {
+    return (
+      <>
+        {hiddenCapture}
+        <SessionComplete
+          session={currentSession}
+          moments={moments}
+          experiments={experiments}
+          initialTags={tags}
+          onSubmit={async (finalTags, absentExpTags) => {
+            const sid = postSessionIdRef.current || sessionId;
+            if (sid) {
+              await fetch('/api/session/end', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sid }),
+              }).catch(() => {});
+              await fetch(`/api/session/${sid}/tags`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tags: finalTags, experiment_absences: absentExpTags }),
+              }).catch(() => {});
+            }
+            postSessionIdRef.current = null;
+            setPostSessionActive(false);
+            setCurrentSession(null);
+          }}
+        />
+      </>
+    );
+  }
+
+  // ── Session complete (ended externally, e.g. Python tracker) ─────────────
+  if (isComplete) {
+    return (
+      <>
+        {hiddenCapture}
+        <SessionComplete
+          session={currentSession}
+          moments={moments}
+          experiments={experiments}
+          initialTags={tags}
+          onSubmit={async (finalTags, absentExpTags) => {
+            if (sessionId) {
+              await fetch(`/api/session/${sessionId}/tags`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tags: finalTags, experiment_absences: absentExpTags }),
+              }).catch(() => {});
+            }
+            setCurrentSession(null);
+          }}
+        />
+      </>
+    );
+  }
+
+  // ── Active session ────────────────────────────────────────────────────────
   return (
     <>
       {hiddenCapture}
@@ -523,35 +820,37 @@ export default function SessionView() {
             </div>
           )}
 
-          {/* Habit tagging */}
-          <div className="card p-4 mb-4">
-            <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Tag this session</p>
-            <div className="flex flex-wrap gap-2">
-              {COMMON_TAGS.map(tag => {
-                const active = tags.includes(tag);
-                const inExperiment = experiments.some(e => e.tag === tag);
-                return (
-                  <button
-                    key={tag}
-                    onClick={() => toggleTag(tag)}
-                    className="px-3 py-1 rounded-full text-xs transition-all"
-                    style={{
-                      background: active ? '#BA7517' : '#F5F4F0',
-                      color: active ? '#FFFFFF' : '#6B6A65',
-                      border: inExperiment && !active ? '1px solid #BA7517' : '0.5px solid transparent',
-                      fontWeight: active ? 500 : 400,
-                      boxShadow: inExperiment && active ? '0 0 0 2px rgba(186,117,23,0.3)' : 'none',
-                    }}
-                  >
-                    {tag.replace(/_/g, ' ')}
-                  </button>
-                );
-              })}
+          {/* Habit tagging — hidden while webcam is active */}
+          {!trackerActive && (
+            <div className="card p-4 mb-4">
+              <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Tag this session</p>
+              <div className="flex flex-wrap gap-2">
+                {COMMON_TAGS.map(tag => {
+                  const active = tags.includes(tag);
+                  const inExperiment = experiments.some(e => e.tag === tag);
+                  return (
+                    <button
+                      key={tag}
+                      onClick={() => toggleTag(tag)}
+                      className="px-3 py-1 rounded-full text-xs transition-all"
+                      style={{
+                        background: active ? '#BA7517' : '#F5F4F0',
+                        color: active ? '#FFFFFF' : '#6B6A65',
+                        border: inExperiment && !active ? '1px solid #BA7517' : '0.5px solid transparent',
+                        fontWeight: active ? 500 : 400,
+                        boxShadow: inExperiment && active ? '0 0 0 2px rgba(186,117,23,0.3)' : 'none',
+                      }}
+                    >
+                      {tag.replace(/_/g, ' ')}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Locus asks */}
-          <LocusNudge moments={moments} sessionAvg={score} />
+          {/* Locus asks — hidden while webcam is active */}
+          {!trackerActive && <LocusNudge moments={moments} sessionAvg={score} />}
         </div>
 
         {/* Right column */}
@@ -586,18 +885,15 @@ export default function SessionView() {
                   </p>
                   <p className="text-xs mt-0.5 italic" style={{ color: '#A09E99' }}>"{latestCapture.note}"</p>
                 </div>
-                <span
-                  className="font-mono text-2xl font-medium"
-                  style={{ color: scoreColor(latestCapture.focus_score) }}
-                >
+                <span className="font-mono text-2xl font-medium" style={{ color: scoreColor(latestCapture.focus_score) }}>
                   {latestCapture.focus_score}
                 </span>
               </div>
             </div>
           )}
 
-          {/* Experiment cards */}
-          {experiments.length > 0 && (
+          {/* Experiment cards — hidden while webcam is active */}
+          {!trackerActive && experiments.length > 0 && (
             <div className="card p-4 mb-4">
               <p className="text-xs font-medium mb-3" style={{ color: '#A09E99', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Experiments updated by this session

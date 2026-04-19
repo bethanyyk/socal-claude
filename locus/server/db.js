@@ -48,11 +48,19 @@ db.exec(`
     description TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS experiment_absences (
+    id INTEGER PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    tag TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_captures_session ON captures(session_id);
   CREATE INDEX IF NOT EXISTS idx_captures_timestamp ON captures(timestamp);
   CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date);
   CREATE INDEX IF NOT EXISTS idx_habit_tags_session ON habit_tags(session_id);
   CREATE INDEX IF NOT EXISTS idx_habit_tags_tag ON habit_tags(tag);
+  CREATE INDEX IF NOT EXISTS idx_exp_absences_session ON experiment_absences(session_id);
+  CREATE INDEX IF NOT EXISTS idx_exp_absences_tag ON experiment_absences(tag);
 `);
 
 function insertCapture(data) {
@@ -93,18 +101,11 @@ function getFocusArc(sessionId) {
     'SELECT timestamp, focus_score FROM captures WHERE session_id = ? ORDER BY timestamp'
   ).all(sessionId);
   if (!captures.length) return [];
-
-  const startTime = captures[0].timestamp;
-  const buckets = {};
-  for (const c of captures) {
-    const minute = Math.floor((c.timestamp - startTime) / 60000);
-    if (!buckets[minute]) buckets[minute] = [];
-    buckets[minute].push(c.focus_score);
-  }
-  return Object.entries(buckets).map(([minute, scores]) => ({
-    minute: parseInt(minute),
-    avg_focus: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length),
-  })).sort((a, b) => a.minute - b.minute);
+  const startTime = session.started_at || captures[0].timestamp;
+  return captures.map(c => ({
+    elapsed: Math.round((c.timestamp - startTime) / 1000),
+    avg_focus: c.focus_score,
+  }));
 }
 
 function getKeyMoments(sessionId) {
@@ -236,35 +237,58 @@ function setSessionTags(sessionId, tags) {
   for (const tag of tags) addHabitTag(sessionId, tag);
 }
 
+function setExperimentAbsences(sessionId, tags) {
+  db.prepare('DELETE FROM experiment_absences WHERE session_id = ?').run(sessionId);
+  for (const tag of tags) {
+    db.prepare('INSERT INTO experiment_absences (session_id, tag) VALUES (?, ?)').run(sessionId, tag);
+  }
+}
+
 function computeExperimentCorrelation(tag) {
-  const dailyAvgs = getDailyAverages();
-  if (dailyAvgs.length < 2) return { r: null, n: dailyAvgs.length, sessions_with: 0, sessions_without: 0, avg_with: null, avg_without: null };
+  // Count ALL explicitly tagged sessions for the display numbers
+  const sessions_with = db.prepare(
+    'SELECT COUNT(*) AS n FROM habit_tags WHERE tag = ?'
+  ).get(tag).n;
+  const sessions_without = db.prepare(
+    'SELECT COUNT(*) AS n FROM experiment_absences WHERE tag = ?'
+  ).get(tag).n;
 
-  const withTag = dailyAvgs.filter(d => d.tags.includes(tag));
-  const withoutTag = dailyAvgs.filter(d => !d.tags.includes(tag));
+  // Only use sessions with focus data for the actual correlation math
+  const present = db.prepare(`
+    SELECT s.avg_focus FROM sessions s
+    JOIN habit_tags ht ON s.id = ht.session_id
+    WHERE ht.tag = ? AND s.avg_focus IS NOT NULL
+  `).all(tag);
+  const absent = db.prepare(`
+    SELECT s.avg_focus FROM sessions s
+    JOIN experiment_absences ea ON s.id = ea.session_id
+    WHERE ea.tag = ? AND s.avg_focus IS NOT NULL
+  `).all(tag);
 
-  const n = dailyAvgs.length;
-  const x = dailyAvgs.map(d => d.tags.includes(tag) ? 1 : 0);
-  const y = dailyAvgs.map(d => d.avg_focus);
+  const avg_with = present.length
+    ? Math.round(present.reduce((a, s) => a + s.avg_focus, 0) / present.length)
+    : null;
+  const avg_without = absent.length
+    ? Math.round(absent.reduce((a, s) => a + s.avg_focus, 0) / absent.length)
+    : null;
 
+  if (present.length === 0 || absent.length === 0) {
+    return { r: null, n: sessions_with + sessions_without, sessions_with, sessions_without, avg_with, avg_without };
+  }
+
+  const x = [...present.map(() => 1), ...absent.map(() => 0)];
+  const y = [...present.map(s => s.avg_focus), ...absent.map(s => s.avg_focus)];
+  const n = x.length;
   const xMean = x.reduce((a, b) => a + b, 0) / n;
   const yMean = y.reduce((a, b) => a + b, 0) / n;
-
   const num = x.reduce((sum, xi, i) => sum + (xi - xMean) * (y[i] - yMean), 0);
   const den = Math.sqrt(
     x.reduce((s, xi) => s + (xi - xMean) ** 2, 0) *
     y.reduce((s, yi) => s + (yi - yMean) ** 2, 0)
   );
+  const r = den === 0 ? null : Math.round((num / den) * 1000) / 1000;
 
-  const r = den === 0 ? null : num / den;
-  return {
-    r: r !== null ? Math.round(r * 1000) / 1000 : null,
-    n,
-    sessions_with: withTag.length,
-    sessions_without: withoutTag.length,
-    avg_with: withTag.length ? Math.round(withTag.reduce((a, d) => a + d.avg_focus, 0) / withTag.length) : null,
-    avg_without: withoutTag.length ? Math.round(withoutTag.reduce((a, d) => a + d.avg_focus, 0) / withoutTag.length) : null,
-  };
+  return { r, n: sessions_with + sessions_without, sessions_with, sessions_without, avg_with, avg_without };
 }
 
 function getDailyAverages() {
@@ -284,12 +308,22 @@ function getDailyAverages() {
 }
 
 function getCorrelationHistory(tag) {
-  const dailyAvgs = getDailyAverages();
+  const tracked = db.prepare(`
+    SELECT s.avg_focus, s.started_at, 1 AS present
+    FROM sessions s JOIN habit_tags ht ON s.id = ht.session_id
+    WHERE ht.tag = ? AND s.avg_focus IS NOT NULL
+    UNION ALL
+    SELECT s.avg_focus, s.started_at, 0 AS present
+    FROM sessions s JOIN experiment_absences ea ON s.id = ea.session_id
+    WHERE ea.tag = ? AND s.avg_focus IS NOT NULL
+    ORDER BY started_at
+  `).all(tag, tag);
+
   const results = [];
-  for (let i = 2; i <= dailyAvgs.length; i++) {
-    const slice = dailyAvgs.slice(0, i);
-    const x = slice.map(d => d.tags.includes(tag) ? 1 : 0);
-    const y = slice.map(d => d.avg_focus);
+  for (let i = 2; i <= tracked.length; i++) {
+    const slice = tracked.slice(0, i);
+    const x = slice.map(s => s.present);
+    const y = slice.map(s => s.avg_focus);
     const n = slice.length;
     const xMean = x.reduce((a, b) => a + b, 0) / n;
     const yMean = y.reduce((a, b) => a + b, 0) / n;
@@ -299,7 +333,7 @@ function getCorrelationHistory(tag) {
       y.reduce((s, yi) => s + (yi - yMean) ** 2, 0)
     );
     const r = den === 0 ? null : Math.round((num / den) * 1000) / 1000;
-    results.push({ day_index: i - 1, r, date: slice[slice.length - 1].date });
+    results.push({ session_index: i - 1, r });
   }
   return results;
 }
@@ -315,6 +349,7 @@ module.exports = {
   addHabitTag,
   getHabitTags,
   setSessionTags,
+  setExperimentAbsences,
   computeExperimentCorrelation,
   getDailyAverages,
   getCorrelationHistory,

@@ -11,6 +11,7 @@ const {
   getFocusArc,
   getKeyMoments,
   setSessionTags,
+  setExperimentAbsences,
   getHabitTags,
   computeExperimentCorrelation,
   getDailyAverages,
@@ -143,7 +144,10 @@ app.get('/api/session/:id', (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Not found' });
   const tags = getHabitTags(session.id);
-  res.json({ session: { ...session, tags } });
+  const absent_experiment_tags = db.prepare(
+    'SELECT tag FROM experiment_absences WHERE session_id = ?'
+  ).all(session.id).map(r => r.tag);
+  res.json({ session: { ...session, tags, absent_experiment_tags } });
 });
 
 // GET /api/session/:id/arc
@@ -158,9 +162,12 @@ app.get('/api/session/:id/moments', (req, res) => {
 
 // POST /api/session/:id/tags
 app.post('/api/session/:id/tags', (req, res) => {
-  const { tags } = req.body;
+  const { tags, experiment_absences } = req.body;
   if (!Array.isArray(tags)) return res.status(400).json({ error: 'tags must be an array' });
   setSessionTags(req.params.id, tags);
+  if (Array.isArray(experiment_absences)) {
+    setExperimentAbsences(req.params.id, experiment_absences);
+  }
   const experiments = getExperimentsWithStats();
   broadcast({ type: 'experiments_updated', experiments });
   res.json({ ok: true, tags });
@@ -183,6 +190,8 @@ app.get('/api/experiments', (req, res) => {
 app.post('/api/experiments', (req, res) => {
   const { name, tag, description } = req.body;
   if (!name || !tag) return res.status(400).json({ error: 'name and tag required' });
+  const count = db.prepare('SELECT COUNT(*) as n FROM experiments').get().n;
+  if (count >= 3) return res.status(400).json({ error: 'Maximum of 3 active experiments allowed. Complete or delete one first.' });
   db.prepare('INSERT INTO experiments (name, tag, created_at, description) VALUES (?, ?, ?, ?)')
     .run(name, tag.toLowerCase().replace(/\s+/g, '_'), Date.now(), description || '');
   const experiments = getExperimentsWithStats();

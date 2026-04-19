@@ -14,8 +14,14 @@ import { useWs } from './WebSocketContext';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip);
 
-function interpCorrelation(r) {
-  if (r === null) return 'No data yet — keep logging';
+function interpCorrelation(r, stats) {
+  if (r === null) {
+    if (stats) {
+      if ((stats.sessions_with ?? 0) === 0) return 'No "present" sessions yet — mark this condition as present in a future session';
+      if ((stats.sessions_without ?? 0) === 0) return 'No "absent" sessions yet — you need a control group to detect an effect';
+    }
+    return 'Need sessions on more days — keep logging';
+  }
   const abs = Math.abs(r);
   if (abs < 0.2) return 'No clear signal yet — keep logging';
   if (abs < 0.4) return 'Weak signal emerging';
@@ -63,7 +69,9 @@ function ExperimentCard({ exp, selected, onClick }) {
           >
             {r !== null ? `r=${r.toFixed(2)}` : 'n/a'}
           </span>
-          <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>{n} days</p>
+          <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>
+            {exp.correlation?.sessions_with ?? 0}↑ · {exp.correlation?.sessions_without ?? 0}↓
+          </p>
         </div>
       </div>
       <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: '#F5F4F0' }}>
@@ -81,13 +89,13 @@ function CorrelationChart({ exp }) {
   if (history.length < 2) {
     return (
       <div className="py-12 text-center text-sm" style={{ color: '#A09E99' }}>
-        Not enough data yet. Log at least 3 sessions.
+        Need at least 2 tracked sessions (some present, some absent) to plot a trend.
       </div>
     );
   }
 
   const chartData = {
-    labels: history.map(p => `Day ${p.day_index}`),
+    labels: history.map(p => `S${p.session_index}`),
     datasets: [{
       label: 'Correlation r',
       data: history.map(p => p.r),
@@ -155,14 +163,23 @@ export default function ExperimentsView() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="font-lora text-xl" style={{ color: '#1A1917' }}>Experiments</h1>
-        <button
-          onClick={() => setShowForm(s => !s)}
-          className="px-3 py-1.5 rounded-component text-sm font-medium transition-colors"
-          style={{ background: '#BA7517', color: '#FFFFFF' }}
-        >
-          + New experiment
-        </button>
+        <div>
+          <h1 className="font-lora text-xl" style={{ color: '#1A1917' }}>Experiments</h1>
+          {experiments.length >= 3 && (
+            <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>
+              3-experiment limit reached — complete or delete one to add another.
+            </p>
+          )}
+        </div>
+        {experiments.length < 3 && (
+          <button
+            onClick={() => setShowForm(s => !s)}
+            className="px-3 py-1.5 rounded-component text-sm font-medium transition-colors"
+            style={{ background: '#BA7517', color: '#FFFFFF' }}
+          >
+            + New experiment
+          </button>
+        )}
       </div>
 
       {showForm && (
@@ -250,12 +267,12 @@ export default function ExperimentsView() {
 
             <div className="mt-4 p-3 rounded-component surface">
               <p className="text-sm" style={{ color: interpColor(selectedExp.correlation?.r) }}>
-                {interpCorrelation(selectedExp.correlation?.r)}
+                {interpCorrelation(selectedExp.correlation?.r, selectedExp.correlation)}
               </p>
               {selectedExp.correlation?.avg_with !== null && selectedExp.correlation?.avg_without !== null && (
                 <div className="mt-2 grid grid-cols-2 gap-3 text-center">
                   <div>
-                    <p className="text-xs" style={{ color: '#A09E99' }}>With {selectedExp.tag}</p>
+                    <p className="text-xs" style={{ color: '#A09E99' }}>Present</p>
                     <p className="font-mono text-lg" style={{ color: '#1D9E75' }}>
                       {selectedExp.correlation.avg_with}
                     </p>
@@ -264,8 +281,8 @@ export default function ExperimentsView() {
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs" style={{ color: '#A09E99' }}>Without</p>
-                    <p className="font-mono text-lg" style={{ color: '#993C1D' }}>
+                    <p className="text-xs" style={{ color: '#A09E99' }}>Absent</p>
+                    <p className="font-mono text-lg" style={{ color: '#6B6A65' }}>
                       {selectedExp.correlation.avg_without}
                     </p>
                     <p className="text-xs" style={{ color: '#A09E99' }}>
