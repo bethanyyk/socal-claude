@@ -12,6 +12,8 @@ const {
   getKeyMoments,
   setSessionTags,
   setExperimentAbsences,
+  setSessionMetadata,
+  getSessionMetadata,
   getHabitTags,
   computeExperimentCorrelation,
   getDailyAverages,
@@ -47,7 +49,13 @@ Scoring guide:
 - 85-100: Upright, leaning forward slightly, still, eyes on screen
 - 65-84: Generally attentive, minor fidgeting or neutral posture
 - 40-64: Visible distraction, slumped, looking away, restless
-- 0-39:  Not at desk, head down, clearly disengaged or absent`;
+- 0-39:  Not at desk, head down, clearly disengaged or absent
+
+Important: Do not penalize common thinking postures. Resting head on hand/fist,
+leaning back, chin resting on hand, or looking slightly upward/away briefly are
+normal signs of active thinking — not distraction. Only penalize posture if the
+person appears genuinely disengaged (looking at phone, eyes closed, turned away
+from screen entirely).`;
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
@@ -109,22 +117,22 @@ app.post('/api/capture', (req, res) => {
 
 // POST /api/session/start
 app.post('/api/session/start', (req, res) => {
-  const { session_id } = req.body;
+  const { session_id, started_at } = req.body;
   if (!session_id) return res.status(400).json({ error: 'Missing session_id' });
-  upsertSession(session_id, { started_at: Date.now() });
+  upsertSession(session_id, { started_at: started_at || Date.now() });
   broadcast({ type: 'session_start', session_id });
   res.json({ ok: true, session_id });
 });
 
 // POST /api/session/end
 app.post('/api/session/end', (req, res) => {
-  const { session_id } = req.body;
+  const { session_id, ended_at: endedAtOverride } = req.body;
   if (!session_id) return res.status(400).json({ error: 'Missing session_id' });
 
   const session = getSession(session_id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
 
-  const now = Date.now();
+  const now = endedAtOverride || Date.now();
   const duration_seconds = session.started_at ? Math.round((now - session.started_at) / 1000) : 0;
   upsertSession(session_id, { ended_at: now, duration_seconds });
   broadcast({ type: 'session_end', session_id });
@@ -147,7 +155,8 @@ app.get('/api/session/:id', (req, res) => {
   const absent_experiment_tags = db.prepare(
     'SELECT tag FROM experiment_absences WHERE session_id = ?'
   ).all(session.id).map(r => r.tag);
-  res.json({ session: { ...session, tags, absent_experiment_tags } });
+  const metadata = getSessionMetadata(session.id);
+  res.json({ session: { ...session, tags, absent_experiment_tags, metadata } });
 });
 
 // GET /api/session/:id/arc
@@ -162,11 +171,14 @@ app.get('/api/session/:id/moments', (req, res) => {
 
 // POST /api/session/:id/tags
 app.post('/api/session/:id/tags', (req, res) => {
-  const { tags, experiment_absences } = req.body;
+  const { tags, experiment_absences, metadata } = req.body;
   if (!Array.isArray(tags)) return res.status(400).json({ error: 'tags must be an array' });
   setSessionTags(req.params.id, tags);
   if (Array.isArray(experiment_absences)) {
     setExperimentAbsences(req.params.id, experiment_absences);
+  }
+  if (metadata && typeof metadata === 'object') {
+    setSessionMetadata(req.params.id, metadata);
   }
   const experiments = getExperimentsWithStats();
   broadcast({ type: 'experiments_updated', experiments });
@@ -207,10 +219,25 @@ app.get('/api/sessions/by-experiment/:tag', (req, res) => {
 app.post('/api/experiments', (req, res) => {
   const { name, tag, description } = req.body;
   if (!name || !tag) return res.status(400).json({ error: 'name and tag required' });
-  const count = db.prepare('SELECT COUNT(*) as n FROM experiments').get().n;
-  if (count >= 3) return res.status(400).json({ error: 'Maximum of 3 active experiments allowed. Complete or delete one first.' });
+  const count = db.prepare('SELECT COUNT(*) as n FROM experiments WHERE closed_at IS NULL').get().n;
+  if (count >= 3) return res.status(400).json({ error: 'Maximum of 3 active experiments. Close one first (requires collected data on both groups).' });
   db.prepare('INSERT INTO experiments (name, tag, created_at, description) VALUES (?, ?, ?, ?)')
     .run(name, tag.toLowerCase().replace(/\s+/g, '_'), Date.now(), description || '');
+  const experiments = getExperimentsWithStats();
+  broadcast({ type: 'experiments_updated', experiments });
+  res.json({ ok: true, experiments });
+});
+
+// POST /api/experiments/:id/close
+app.post('/api/experiments/:id/close', (req, res) => {
+  const exp = db.prepare('SELECT * FROM experiments WHERE id = ?').get(req.params.id);
+  if (!exp) return res.status(404).json({ error: 'Experiment not found' });
+  if (exp.closed_at) return res.status(400).json({ error: 'Already closed' });
+  const corr = computeExperimentCorrelation(exp.tag);
+  if (corr.r === null) {
+    return res.status(400).json({ error: 'Cannot close yet — collect data from both present and absent sessions first.' });
+  }
+  db.prepare('UPDATE experiments SET closed_at = ? WHERE id = ?').run(Date.now(), req.params.id);
   const experiments = getExperimentsWithStats();
   broadcast({ type: 'experiments_updated', experiments });
   res.json({ ok: true, experiments });

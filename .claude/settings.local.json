@@ -9,7 +9,22 @@
       "Bash(node -e \"require\\('./index.js'\\)\")",
       "Bash(curl -s http://localhost:3001/api/session/current)",
       "Bash(kill %1)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(nohup node *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s --max-time 5 http://localhost:3001/api/experiments)",
+      "Read(//c/Users/sungk/.nvm/versions/**)",
+      "Read(//c/Program Files/**)",
+      "Read(//c//**)",
+      "Bash(\"./node_modules/.bin/prebuild-install\" --directory node_modules/better-sqlite3 --verbose)",
+      "Bash(node_modules/.bin/prebuild-install --verbose)",
+      "Bash(\"../../.bin/prebuild-install\" --verbose)",
+      "Bash(curl -s \"https://api.github.com/repos/WiseLibs/better-sqlite3/releases/latest\")",
+      "Bash(curl -s \"https://github.com/WiseLibs/better-sqlite3/releases/download/v12.9.0/better-sqlite3-v12.9.0-node-v137-win32-x64.tar.gz\" -o /tmp/bsqlite.tar.gz -L --max-time 60)",
+      "Bash(curl -s --max-time 2 http://localhost:3001/api/session/current)",
+      "Bash(pkill -f \"node index.js\")",
+      "Bash(curl -s http://localhost:3001/api/experiments)",
+      "Bash(curl -s http://localhost:3001/api/history)"
     ]
   }
 }

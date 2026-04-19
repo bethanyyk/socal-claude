@@ -23,7 +23,7 @@ html, body {
 /* Pulse animation for experiment cards when updated */
 @keyframes highlight-pulse {
   0% { background-color: transparent; }
-  30% { background-color: #F5E6C8; }
+  30% { background-color: #DDE8FA; }
   100% { background-color: transparent; }
 }
 
@@ -45,8 +45,8 @@ html, body {
 
 /* Score color utilities */
 .score-high { color: #1D9E75; }
-.score-mid { color: #BA7517; }
-.score-low { color: #993C1D; }
+.score-mid { color: #7b9ce2; }
+.score-low { color: #C24220; }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }

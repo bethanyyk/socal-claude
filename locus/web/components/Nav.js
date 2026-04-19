@@ -9,7 +9,7 @@ function StreakDot({ active }) {
   return (
     <span
       className="inline-block w-2 h-2 rounded-full mr-0.5"
-      style={{ background: active ? '#BA7517' : 'rgba(0,0,0,0.12)' }}
+      style={{ background: active ? '#7b9ce2' : 'rgba(0,0,0,0.12)' }}
     />
   );
 }
@@ -51,7 +51,7 @@ export default function Nav() {
     >
       {/* Logo */}
       <span className="font-lora text-lg font-medium tracking-tight select-none" style={{ color: '#1A1917' }}>
-        lo<span style={{ color: '#BA7517' }}>·</span>cus
+        lo<span style={{ color: '#7b9ce2' }}>·</span>cus
       </span>
 
       {/* Tabs */}
@@ -90,7 +90,7 @@ export default function Nav() {
         )}
         <span
           className="w-1.5 h-1.5 rounded-full"
-          style={{ background: connected ? '#1D9E75' : '#993C1D' }}
+          style={{ background: connected ? '#1D9E75' : '#C24220' }}
           title={connected ? 'Connected' : 'Disconnected'}
         />
       </div>

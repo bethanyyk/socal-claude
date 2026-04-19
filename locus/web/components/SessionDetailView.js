@@ -18,8 +18,8 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, 
 
 function scoreColor(score) {
   if (score >= 70) return '#1D9E75';
-  if (score >= 45) return '#BA7517';
-  return '#993C1D';
+  if (score >= 45) return '#7b9ce2';
+  return '#C24220';
 }
 
 function formatTime(ts) {
@@ -41,7 +41,7 @@ function formatDuration(seconds) {
 }
 
 function MomentDot({ sentiment }) {
-  const colors = { positive: '#1D9E75', negative: '#993C1D', neutral: '#BA7517' };
+  const colors = { positive: '#1D9E75', negative: '#C24220', neutral: '#7b9ce2' };
   return (
     <span
       className="inline-block w-2 h-2 rounded-full flex-shrink-0 mt-1"
@@ -92,7 +92,7 @@ export default function SessionDetailView({ sessionId }) {
     return <div className="py-12 text-center text-sm" style={{ color: '#A09E99' }}>Loading…</div>;
   }
   if (!session) {
-    return <div className="py-12 text-center text-sm" style={{ color: '#993C1D' }}>Session not found.</div>;
+    return <div className="py-12 text-center text-sm" style={{ color: '#C24220' }}>Session not found.</div>;
   }
 
   const score = session.avg_focus ? Math.round(session.avg_focus) : null;
@@ -116,8 +116,8 @@ export default function SessionDetailView({ sessionId }) {
     labels: arcLabels,
     datasets: [{
       data: arc.map(p => p.avg_focus),
-      borderColor: '#BA7517',
-      backgroundColor: 'rgba(186,117,23,0.08)',
+      borderColor: '#7b9ce2',
+      backgroundColor: 'rgba(123,156,226,0.08)',
       fill: true,
       tension: 0.35,
       borderWidth: 2,
@@ -243,7 +243,7 @@ export default function SessionDetailView({ sessionId }) {
           <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Conditions</p>
           <div className="flex flex-wrap gap-2">
             {nonExpTags.map(tag => (
-              <span key={tag} className="px-3 py-1 rounded-full text-xs font-medium" style={{ background: '#F5E6C8', color: '#BA7517' }}>
+              <span key={tag} className="px-3 py-1 rounded-full text-xs font-medium" style={{ background: '#DDE8FA', color: '#7b9ce2' }}>
                 {tag.replace(/_/g, ' ')}
               </span>
             ))}

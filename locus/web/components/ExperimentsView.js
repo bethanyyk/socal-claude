@@ -34,13 +34,13 @@ function calcConfidence(r, n) {
 
 function interpColor(r) {
   if (r === null) return '#A09E99';
-  return Math.abs(r) < 0.2 ? '#A09E99' : Math.abs(r) < 0.4 ? '#BA7517' : '#1D9E75';
+  return Math.abs(r) < 0.2 ? '#A09E99' : Math.abs(r) < 0.4 ? '#7b9ce2' : '#1D9E75';
 }
 
 function scoreColor(score) {
   if (score >= 70) return '#1D9E75';
-  if (score >= 45) return '#BA7517';
-  return '#993C1D';
+  if (score >= 45) return '#7b9ce2';
+  return '#C24220';
 }
 
 function formatDateTime(ts) {
@@ -57,14 +57,14 @@ function formatDuration(seconds) {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-function ExperimentCard({ exp, selected, onClick }) {
+function ExperimentCard({ exp, selected, onClick, muted }) {
   const r = exp.correlation?.r;
   const barWidth = r !== null ? Math.min(Math.abs(r) * 100, 100) : 0;
   return (
     <button
       onClick={onClick}
       className="w-full text-left card p-3 mb-2 transition-all hover:shadow-sm"
-      style={{ border: selected ? '1px solid #BA7517' : '0.5px solid rgba(0,0,0,0.1)', background: selected ? '#FFFDF8' : '#FFFFFF' }}
+      style={{ border: selected ? '1px solid #7b9ce2' : '0.5px solid rgba(0,0,0,0.1)', background: selected ? '#F5F8FE' : '#FFFFFF', opacity: muted && !selected ? 0.6 : 1 }}
     >
       <div className="flex items-start justify-between mb-2">
         <div>
@@ -89,7 +89,7 @@ function ExperimentCard({ exp, selected, onClick }) {
   );
 }
 
-function ExperimentDetail({ exp, sessions }) {
+function ExperimentDetail({ exp, sessions, onClose }) {
   const c = exp.correlation || {};
   const r = c.r ?? null;
   const r2 = r !== null ? Math.round(r * r * 100) : null;
@@ -106,11 +106,11 @@ function ExperimentDetail({ exp, sessions }) {
   } else if (!c.sessions_with) {
     headline = 'No "present" sessions yet';
     detail = `You have ${c.sessions_without} absent session${c.sessions_without !== 1 ? 's' : ''}. Log some sessions where this condition applied.`;
-    headlineColor = '#BA7517';
+    headlineColor = '#7b9ce2';
   } else if (!c.sessions_without) {
     headline = 'No "absent" sessions yet';
     detail = `You have ${c.sessions_with} present session${c.sessions_with !== 1 ? 's' : ''}. To compare, also log sessions without this condition — that's your control group.`;
-    headlineColor = '#BA7517';
+    headlineColor = '#7b9ce2';
   } else if (r === null) {
     headline = 'Collecting data…';
     detail = `${c.sessions_with} present · ${c.sessions_without} absent. A pattern will emerge as you add more sessions.`;
@@ -121,7 +121,7 @@ function ExperimentDetail({ exp, sessions }) {
     detail = conf !== null
       ? `${conf}% confident this is a real effect (not random variation).`
       : '';
-    headlineColor = diff > 0 ? '#1D9E75' : '#993C1D';
+    headlineColor = diff > 0 ? '#1D9E75' : '#C24220';
   }
 
   // Chart
@@ -132,11 +132,11 @@ function ExperimentDetail({ exp, sessions }) {
     datasets: [{
       label: 'r',
       data: history.map(p => p.r),
-      borderColor: '#BA7517',
+      borderColor: '#7b9ce2',
       tension: 0.3,
       borderWidth: 2,
       pointRadius: 2.5,
-      pointBackgroundColor: '#BA7517',
+      pointBackgroundColor: '#7b9ce2',
     }],
   } : null;
   const chartOptions = {
@@ -204,7 +204,7 @@ function ExperimentDetail({ exp, sessions }) {
           {conf !== null && (
             <div className="rounded-component p-2.5" style={{ background: '#F5F4F0' }}>
               <p className="text-xs mb-1" style={{ color: '#A09E99' }}>Confidence</p>
-              <p className="font-mono text-base font-medium" style={{ color: conf >= 90 ? '#1D9E75' : conf >= 75 ? '#BA7517' : '#A09E99' }}>
+              <p className="font-mono text-base font-medium" style={{ color: conf >= 90 ? '#1D9E75' : conf >= 75 ? '#7b9ce2' : '#A09E99' }}>
                 {conf}%
               </p>
               <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>
@@ -278,6 +278,34 @@ function ExperimentDetail({ exp, sessions }) {
             ))}
         </div>
       )}
+
+      {/* Close / closed status */}
+      {exp.closed_at ? (
+        <div className="mt-5 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
+          <p className="text-xs" style={{ color: '#A09E99' }}>
+            Closed {new Date(exp.closed_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} · data preserved
+          </p>
+        </div>
+      ) : r !== null && onClose ? (
+        <div className="mt-5 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded-component transition-opacity hover:opacity-70"
+            style={{ background: '#F5F4F0', color: '#6B6A65' }}
+          >
+            Close experiment
+          </button>
+          <p className="text-xs mt-1.5" style={{ color: '#A09E99' }}>
+            Frees a slot for a new experiment. Analysis results are preserved.
+          </p>
+        </div>
+      ) : !exp.closed_at && r === null ? (
+        <div className="mt-5 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
+          <p className="text-xs" style={{ color: '#A09E99' }}>
+            Can be closed once you have data from both present and absent sessions.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -288,9 +316,13 @@ export default function ExperimentsView() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', tag: '', description: '' });
   const [saving, setSaving] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [expSessions, setExpSessions] = useState([]);
 
-  const selectedExp = experiments.find(e => e.id === selected) || experiments[0] || null;
+  const active = experiments.filter(e => !e.closed_at);
+  const archived = experiments.filter(e => e.closed_at);
+  const defaultExp = active[0] || archived[0] || null;
+  const selectedExp = experiments.find(e => e.id === selected) || defaultExp;
 
   useEffect(() => {
     if (!selectedExp) return;
@@ -321,22 +353,36 @@ export default function ExperimentsView() {
     }
   }
 
+  async function closeExperiment(exp) {
+    setClosing(true);
+    try {
+      const res = await fetch(`/api/experiments/${exp.id}/close`, { method: 'POST' });
+      const data = await res.json();
+      if (data.error) { alert(data.error); return; }
+      if (data.experiments) setExperiments(data.experiments);
+    } finally {
+      setClosing(false);
+    }
+  }
+
+  const allEmpty = experiments.length === 0;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="font-lora text-xl" style={{ color: '#1A1917' }}>Experiments</h1>
-          {experiments.length >= 3 && (
+          {active.length >= 3 && (
             <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>
-              3-experiment limit — complete or delete one to add another.
+              3 active — close one to add another (requires data from both groups).
             </p>
           )}
         </div>
-        {experiments.length < 3 && (
+        {active.length < 3 && (
           <button
             onClick={() => setShowForm(s => !s)}
             className="px-3 py-1.5 rounded-component text-sm font-medium transition-colors"
-            style={{ background: '#BA7517', color: '#FFFFFF' }}
+            style={{ background: '#7b9ce2', color: '#fff' }}
           >
             + New experiment
           </button>
@@ -350,6 +396,14 @@ export default function ExperimentsView() {
             An experiment tracks whether one condition (e.g. morning exercise) consistently affects your focus.
             After sessions, you'll mark each one as "Present" or "Absent" for this condition.
           </p>
+          {active.length === 2 && (
+            <div className="rounded-component p-3 mb-3" style={{ background: '#7b9ce2', border: '0.5px solid rgba(0,0,0,0.1)' }}>
+              <p className="text-xs font-medium mb-0.5" style={{ color: '#fff' }}>This will be your third active experiment</p>
+              <p className="text-xs" style={{ color: '#fff' }}>
+                You won't be able to add more until one is closed — and an experiment can only be closed once you've collected data from both present and absent sessions. Make sure you're ready to commit.
+              </p>
+            </div>
+          )}
           <form onSubmit={createExperiment} className="space-y-2">
             <input
               className="w-full px-3 py-2 text-sm rounded-component surface outline-none"
@@ -375,7 +429,7 @@ export default function ExperimentsView() {
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
             />
             <div className="flex gap-2 pt-1">
-              <button type="submit" disabled={saving} className="px-4 py-1.5 text-sm rounded-component font-medium" style={{ background: '#BA7517', color: '#FFFFFF', opacity: saving ? 0.7 : 1 }}>
+              <button type="submit" disabled={saving} className="px-4 py-1.5 text-sm rounded-component font-medium" style={{ background: '#7b9ce2', color: '#fff', opacity: saving ? 0.7 : 1 }}>
                 {saving ? 'Saving…' : 'Create'}
               </button>
               <button type="button" onClick={() => setShowForm(false)} className="px-4 py-1.5 text-sm rounded-component" style={{ background: '#F5F4F0', color: '#6B6A65' }}>
@@ -386,7 +440,7 @@ export default function ExperimentsView() {
         </div>
       )}
 
-      {experiments.length === 0 ? (
+      {allEmpty ? (
         <div className="card p-8 text-center">
           <p className="font-lora text-lg mb-2" style={{ color: '#1A1917' }}>No experiments yet</p>
           <p className="text-sm max-w-md mx-auto" style={{ color: '#6B6A65' }}>
@@ -397,16 +451,38 @@ export default function ExperimentsView() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
           <div>
-            {experiments.map(exp => (
+            {active.map(exp => (
               <ExperimentCard
                 key={exp.id}
                 exp={exp}
-                selected={selected === exp.id || (!selected && exp === experiments[0])}
+                selected={selected === exp.id || (!selected && exp === defaultExp)}
                 onClick={() => setSelected(exp.id)}
               />
             ))}
+            {archived.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs mb-2 px-1" style={{ color: '#A09E99' }}>Archived</p>
+                {archived.map(exp => (
+                  <ExperimentCard
+                    key={exp.id}
+                    exp={exp}
+                    selected={selected === exp.id}
+                    onClick={() => setSelected(exp.id)}
+                    muted
+                  />
+                ))}
+              </div>
+            )}
           </div>
-          {selectedExp && <ExperimentDetail exp={selectedExp} sessions={expSessions} />}
+          {selectedExp && (
+            <ExperimentDetail
+              exp={selectedExp}
+              sessions={expSessions}
+              onClose={!selectedExp.closed_at && selectedExp.correlation?.r !== null
+                ? () => closeExperiment(selectedExp)
+                : null}
+            />
+          )}
         </div>
       )}
     </div>

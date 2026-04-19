@@ -17,8 +17,8 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, 
 
 function scoreColor(score) {
   if (score >= 70) return '#1D9E75';
-  if (score >= 45) return '#BA7517';
-  return '#993C1D';
+  if (score >= 45) return '#7b9ce2';
+  return '#C24220';
 }
 
 function formatDuration(seconds) {
@@ -69,7 +69,7 @@ function DayRow({ date, sessions, tags }) {
           </span>
         )}
         {tags?.map(tag => (
-          <span key={tag} className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#F5E6C8', color: '#BA7517' }}>
+          <span key={tag} className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#DDE8FA', color: '#7b9ce2' }}>
             {tag.replace(/_/g, ' ')}
           </span>
         ))}
@@ -140,7 +140,7 @@ function CalendarView({ sessions }) {
                 className="rounded-component flex flex-col items-center justify-center py-1.5 transition-all"
                 style={{
                   background: isSelected ? '#1A1917' : avgScore !== null ? scoreColor(avgScore) + '22' : '#F5F4F0',
-                  border: isToday && !isSelected ? '1.5px solid #BA7517' : '1.5px solid transparent',
+                  border: isToday && !isSelected ? '1.5px solid #7b9ce2' : '1.5px solid transparent',
                   minHeight: '48px',
                   cursor: daySessions.length > 0 ? 'pointer' : 'default',
                 }}
@@ -239,8 +239,8 @@ export default function HistoryView() {
     datasets: [{
       label: 'Daily avg focus',
       data: last38.map(d => d.avg_focus),
-      borderColor: '#BA7517',
-      backgroundColor: 'rgba(186,117,23,0.07)',
+      borderColor: '#7b9ce2',
+      backgroundColor: 'rgba(123,156,226,0.07)',
       fill: true,
       tension: 0.4,
       borderWidth: 2,

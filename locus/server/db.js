@@ -11,6 +11,9 @@ const db = new Database(path.join(dbDir, 'locus.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Migrations
+try { db.exec('ALTER TABLE experiments ADD COLUMN closed_at INTEGER'); } catch (_) {}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS captures (
     id INTEGER PRIMARY KEY,
@@ -45,7 +48,8 @@ db.exec(`
     name TEXT NOT NULL,
     tag TEXT NOT NULL,
     created_at INTEGER,
-    description TEXT
+    description TEXT,
+    closed_at INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS experiment_absences (
@@ -61,6 +65,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_habit_tags_tag ON habit_tags(tag);
   CREATE INDEX IF NOT EXISTS idx_exp_absences_session ON experiment_absences(session_id);
   CREATE INDEX IF NOT EXISTS idx_exp_absences_tag ON experiment_absences(tag);
+
+  CREATE TABLE IF NOT EXISTS session_metadata (
+    session_id TEXT PRIMARY KEY,
+    sleep_quality INTEGER,
+    energy_level INTEGER,
+    caffeine INTEGER,
+    stress INTEGER,
+    noise INTEGER,
+    task_type TEXT,
+    task_clarity INTEGER
+  );
 `);
 
 function insertCapture(data) {
@@ -74,11 +89,12 @@ function insertCapture(data) {
 function upsertSession(sessionId, updates) {
   const existing = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
   if (!existing) {
-    const date = new Date().toISOString().slice(0, 10);
+    const startedAt = updates.started_at || Date.now();
+    const date = new Date(startedAt).toISOString().slice(0, 10);
     db.prepare(`
       INSERT INTO sessions (id, date, started_at, avg_focus, peak_focus, duration_seconds, capture_count)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(sessionId, date, updates.started_at || Date.now(), updates.avg_focus || null, updates.peak_focus || null, updates.duration_seconds || 0, updates.capture_count || 0);
+    `).run(sessionId, date, startedAt, updates.avg_focus || null, updates.peak_focus || null, updates.duration_seconds || 0, updates.capture_count || 0);
   } else {
     const fields = Object.keys(updates).map(k => `${k} = @${k}`).join(', ');
     db.prepare(`UPDATE sessions SET ${fields} WHERE id = @id`).run({ ...updates, id: sessionId });
@@ -244,6 +260,72 @@ function setExperimentAbsences(sessionId, tags) {
   }
 }
 
+function setSessionMetadata(sessionId, meta) {
+  const { sleep_quality, energy_level, caffeine, stress, noise, task_type, task_clarity } = meta;
+  const exists = db.prepare('SELECT session_id FROM session_metadata WHERE session_id = ?').get(sessionId);
+  if (exists) {
+    db.prepare(`UPDATE session_metadata SET sleep_quality=?,energy_level=?,caffeine=?,stress=?,noise=?,task_type=?,task_clarity=? WHERE session_id=?`)
+      .run(sleep_quality ?? null, energy_level ?? null, caffeine ?? null, stress ?? null, noise ?? null, task_type ?? null, task_clarity ?? null, sessionId);
+  } else {
+    db.prepare(`INSERT INTO session_metadata (session_id,sleep_quality,energy_level,caffeine,stress,noise,task_type,task_clarity) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(sessionId, sleep_quality ?? null, energy_level ?? null, caffeine ?? null, stress ?? null, noise ?? null, task_type ?? null, task_clarity ?? null);
+  }
+}
+
+function getSessionMetadata(sessionId) {
+  return db.prepare('SELECT * FROM session_metadata WHERE session_id = ?').get(sessionId) || null;
+}
+
+// --- OLS helpers for confounder-adjusted partial correlation ---
+function _dot(a, b) { return a.reduce((s, v, i) => s + v * b[i], 0); }
+
+function _matMul(A, B) {
+  return A.map(row => B[0].map((_, j) => row.reduce((s, _, k) => s + row[k] * B[k][j], 0)));
+}
+
+function _solveLinear(A, b) {
+  const n = A.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let maxRow = col;
+    for (let row = col + 1; row < n; row++) {
+      if (Math.abs(M[row][col]) > Math.abs(M[maxRow][col])) maxRow = row;
+    }
+    [M[col], M[maxRow]] = [M[maxRow], M[col]];
+    const pivot = M[col][col];
+    if (Math.abs(pivot) < 1e-10) return null;
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const f = M[row][col] / pivot;
+      for (let k = col; k <= n; k++) M[row][k] -= f * M[col][k];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
+}
+
+function _olsResiduals(C, y) {
+  const n = y.length;
+  const mean = y.reduce((s, v) => s + v, 0) / n;
+  if (!C.length || !C[0].length) return y.map(v => v - mean);
+  const X = C.map(row => [1, ...row]);
+  const k = X[0].length;
+  const Xt = Array.from({ length: k }, (_, j) => X.map(row => row[j]));
+  const XtX = _matMul(Xt, X);
+  const Xty = Xt.map(row => _dot(row, y));
+  const beta = _solveLinear(XtX, Xty);
+  if (!beta) return y.map(v => v - mean);
+  return y.map((v, i) => v - _dot(X[i], beta));
+}
+
+function _pearson(x, y) {
+  const n = x.length;
+  const xm = x.reduce((s, v) => s + v, 0) / n;
+  const ym = y.reduce((s, v) => s + v, 0) / n;
+  const num = x.reduce((s, v, i) => s + (v - xm) * (y[i] - ym), 0);
+  const den = Math.sqrt(x.reduce((s, v) => s + (v - xm) ** 2, 0) * y.reduce((s, v) => s + (v - ym) ** 2, 0));
+  return den === 0 ? null : Math.round((num / den) * 1000) / 1000;
+}
+
 function computeExperimentCorrelation(tag) {
   // Count ALL explicitly tagged sessions for the display numbers
   const sessions_with = db.prepare(
@@ -288,7 +370,48 @@ function computeExperimentCorrelation(tag) {
   );
   const r = den === 0 ? null : Math.round((num / den) * 1000) / 1000;
 
-  return { r, n: sessions_with + sessions_without, sessions_with, sessions_without, avg_with, avg_without };
+  // Confounder-adjusted partial correlation
+  const NUMERIC_CONF = ['sleep_quality', 'energy_level', 'caffeine', 'stress', 'noise', 'task_clarity'];
+  const MIN_N = 8;
+
+  const presentMeta = db.prepare(`
+    SELECT s.avg_focus, m.sleep_quality, m.energy_level, m.caffeine, m.stress, m.noise, m.task_clarity
+    FROM sessions s
+    JOIN habit_tags ht ON s.id = ht.session_id
+    LEFT JOIN session_metadata m ON s.id = m.session_id
+    WHERE ht.tag = ? AND s.avg_focus IS NOT NULL
+  `).all(tag).map(s => ({ ...s, cond: 1 }));
+
+  const absentMeta = db.prepare(`
+    SELECT s.avg_focus, m.sleep_quality, m.energy_level, m.caffeine, m.stress, m.noise, m.task_clarity
+    FROM sessions s
+    JOIN experiment_absences ea ON s.id = ea.session_id
+    LEFT JOIN session_metadata m ON s.id = m.session_id
+    WHERE ea.tag = ? AND s.avg_focus IS NOT NULL
+  `).all(tag).map(s => ({ ...s, cond: 0 }));
+
+  const allMeta = [...presentMeta, ...absentMeta];
+
+  const confoundersUsed = NUMERIC_CONF.filter(c => {
+    const filled = allMeta.filter(s => s[c] !== null && s[c] !== undefined).length;
+    return filled >= MIN_N && filled / allMeta.length >= 0.5;
+  });
+
+  let r_adjusted = null, n_adjusted = null;
+  if (confoundersUsed.length >= 1) {
+    const complete = allMeta.filter(s => confoundersUsed.every(c => s[c] !== null && s[c] !== undefined));
+    if (complete.length >= MIN_N) {
+      const yAdj = complete.map(s => s.avg_focus);
+      const xAdj = complete.map(s => s.cond);
+      const C = complete.map(s => confoundersUsed.map(c => s[c]));
+      const y_res = _olsResiduals(C, yAdj);
+      const x_res = _olsResiduals(C, xAdj);
+      r_adjusted = _pearson(x_res, y_res);
+      n_adjusted = complete.length;
+    }
+  }
+
+  return { r, n: sessions_with + sessions_without, sessions_with, sessions_without, avg_with, avg_without, r_adjusted, n_adjusted, confounders_used: confoundersUsed };
 }
 
 function getDailyAverages() {
@@ -350,6 +473,8 @@ module.exports = {
   getHabitTags,
   setSessionTags,
   setExperimentAbsences,
+  setSessionMetadata,
+  getSessionMetadata,
   computeExperimentCorrelation,
   getDailyAverages,
   getCorrelationHistory,

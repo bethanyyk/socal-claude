@@ -15,13 +15,13 @@ import { useWs } from './WebSocketContext';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
-const COMMON_TAGS = ['coffee', 'exercise', 'good_sleep', 'late_screens', 'music', 'pomodoro', 'fasting', 'meditation'];
+const COMMON_TAGS = ['exercise', 'good_sleep', 'late_screens', 'music', 'pomodoro', 'fasting', 'meditation'];
 const CAPTURE_INTERVAL_MS = 10_000;
 
 function scoreColor(score) {
   if (score >= 70) return '#1D9E75';
-  if (score >= 45) return '#BA7517';
-  return '#993C1D';
+  if (score >= 45) return '#7b9ce2';
+  return '#C24220';
 }
 
 function formatDuration(seconds) {
@@ -38,7 +38,7 @@ function formatTime(ts) {
 }
 
 function MomentDot({ sentiment }) {
-  const colors = { positive: '#1D9E75', negative: '#993C1D', neutral: '#BA7517' };
+  const colors = { positive: '#1D9E75', negative: '#C24220', neutral: '#7b9ce2' };
   return (
     <span
       className="inline-block w-2 h-2 rounded-full flex-shrink-0 mt-1"
@@ -95,26 +95,51 @@ function buildNudgeQuestions(moments) {
   return questions;
 }
 
-function SessionComplete({ session, moments, experiments, initialTags, onSubmit }) {
-  const [tags, setTags] = useState(initialTags || []);
+function MetaRow({ label, options, value, onChange }) {
+  return (
+    <div className="flex items-center gap-3 py-1.5" style={{ borderBottom: '0.5px solid rgba(0,0,0,0.04)' }}>
+      <span className="text-xs flex-shrink-0 w-20" style={{ color: '#6B6A65' }}>{label}</span>
+      <div className="flex gap-1.5 flex-wrap">
+        {options.map(opt => (
+          <button
+            key={String(opt.value)}
+            onClick={() => onChange(value === opt.value ? null : opt.value)}
+            className="px-2.5 py-1 rounded-full text-xs transition-all"
+            style={{
+              background: value === opt.value ? '#7b9ce2' : '#F5F4F0',
+              color: value === opt.value ? '#FFFFFF' : '#6B6A65',
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SessionComplete({ session, moments, experiments, onSubmit }) {
   const [absentExps, setAbsentExps] = useState(new Set());
-  const [reflections, setReflections] = useState({});
+  const [expTags, setExpTags] = useState([]);
+  const [metadata, setMetadata] = useState({
+    sleep_quality: null, energy_level: null, caffeine: null,
+    stress: null, noise: null, task_type: null, task_clarity: null,
+  });
   const [submitting, setSubmitting] = useState(false);
 
   const score = session.avg_focus ? Math.round(session.avg_focus) : null;
-  const nudgeQuestions = buildNudgeQuestions(moments);
 
-  function toggleTag(tag) {
-    setTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  function setMeta(key, val) {
+    setMetadata(m => ({ ...m, [key]: val }));
   }
 
   function handleExpPresent(exp) {
-    setTags(prev => prev.includes(exp.tag) ? prev.filter(t => t !== exp.tag) : [...prev, exp.tag]);
+    setExpTags(prev => prev.includes(exp.tag) ? prev.filter(t => t !== exp.tag) : [...prev, exp.tag]);
     setAbsentExps(prev => { const s = new Set(prev); s.delete(exp.id); return s; });
   }
 
   function handleExpAbsent(exp) {
-    setTags(prev => prev.filter(t => t !== exp.tag));
+    setExpTags(prev => prev.filter(t => t !== exp.tag));
     setAbsentExps(prev => {
       const s = new Set(prev);
       if (s.has(exp.id)) s.delete(exp.id);
@@ -125,8 +150,8 @@ function SessionComplete({ session, moments, experiments, initialTags, onSubmit 
 
   async function handleSubmit() {
     setSubmitting(true);
-    const absentExpTags = experiments.filter(e => absentExps.has(e.id)).map(e => e.tag);
-    await onSubmit(tags, absentExpTags);
+    const absentExpTags = experiments.filter(e => !e.closed_at && absentExps.has(e.id)).map(e => e.tag);
+    await onSubmit(expTags, absentExpTags, metadata);
   }
 
   return (
@@ -159,47 +184,47 @@ function SessionComplete({ session, moments, experiments, initialTags, onSubmit 
         )}
       </div>
 
-      {/* Conditions */}
+      {/* State */}
       <div className="card p-5 mb-4">
-        <p className="text-sm font-medium mb-0.5" style={{ color: '#1A1917' }}>What was present today?</p>
-        <p className="text-xs mb-3" style={{ color: '#A09E99' }}>Select all that applied</p>
-        <div className="flex flex-wrap gap-2">
-          {COMMON_TAGS.map(tag => {
-            const active = tags.includes(tag);
-            return (
-              <button
-                key={tag}
-                onClick={() => toggleTag(tag)}
-                className="px-3 py-1.5 rounded-full text-xs transition-all"
-                style={{
-                  background: active ? '#BA7517' : '#F5F4F0',
-                  color: active ? '#FFFFFF' : '#6B6A65',
-                  fontWeight: active ? 500 : 400,
-                }}
-              >
-                {tag.replace(/_/g, ' ')}
-              </button>
-            );
-          })}
-        </div>
+        <p className="text-sm font-medium mb-0.5" style={{ color: '#1A1917' }}>How were you?</p>
+        <p className="text-xs mb-3" style={{ color: '#A09E99' }}>Used to adjust for confounders in your experiment analyses</p>
+        <MetaRow label="Sleep" value={metadata.sleep_quality} onChange={v => setMeta('sleep_quality', v)}
+          options={[{value:1,label:'poor'},{value:2,label:'fair'},{value:3,label:'okay'},{value:4,label:'good'},{value:5,label:'great'}]} />
+        <MetaRow label="Energy" value={metadata.energy_level} onChange={v => setMeta('energy_level', v)}
+          options={[{value:1,label:'very low'},{value:2,label:'low'},{value:3,label:'okay'},{value:4,label:'high'},{value:5,label:'peak'}]} />
+        <MetaRow label="Caffeine" value={metadata.caffeine} onChange={v => setMeta('caffeine', v)}
+          options={[{value:0,label:'none'},{value:1,label:'one drink'},{value:2,label:'multiple'}]} />
+        <MetaRow label="Stress" value={metadata.stress} onChange={v => setMeta('stress', v)}
+          options={[{value:0,label:'low'},{value:1,label:'medium'},{value:2,label:'high'}]} />
       </div>
 
-      {/* Experiments */}
-      {experiments.length > 0 && (
-        <div className="card p-5 mb-4">
+      {/* Context */}
+      <div className="card p-5 mb-4">
+        <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Work context</p>
+        <MetaRow label="Task type" value={metadata.task_type} onChange={v => setMeta('task_type', v)}
+          options={[{value:'deep_work',label:'deep work'},{value:'admin',label:'admin'},{value:'creative',label:'creative'},{value:'learning',label:'learning'}]} />
+        <MetaRow label="Clarity" value={metadata.task_clarity} onChange={v => setMeta('task_clarity', v)}
+          options={[{value:1,label:'clear goal'},{value:0,label:'unclear'}]} />
+        <MetaRow label="Noise" value={metadata.noise} onChange={v => setMeta('noise', v)}
+          options={[{value:0,label:'silent'},{value:1,label:'ambient'},{value:2,label:'loud'}]} />
+      </div>
+
+      {/* Experiments — active only */}
+      {experiments.filter(e => !e.closed_at).length > 0 && (
+        <div className="card p-5 mb-6">
           <p className="text-sm font-medium mb-0.5" style={{ color: '#1A1917' }}>Experiment conditions</p>
           <p className="text-xs mb-3" style={{ color: '#A09E99' }}>
             Both "present" and "absent" sessions build your dataset. Leave blank if this session wasn't part of the experiment.
           </p>
-          {experiments.map((exp, i) => {
-            const isPresent = tags.includes(exp.tag);
+          {experiments.filter(e => !e.closed_at).map((exp, i, arr) => {
+            const isPresent = expTags.includes(exp.tag);
             const isAbsent = absentExps.has(exp.id);
             const c = exp.correlation;
             return (
               <div
                 key={exp.id}
                 className="flex items-center justify-between py-2.5"
-                style={{ borderBottom: i < experiments.length - 1 ? '0.5px solid rgba(0,0,0,0.06)' : 'none' }}
+                style={{ borderBottom: i < arr.length - 1 ? '0.5px solid rgba(0,0,0,0.06)' : 'none' }}
               >
                 <div>
                   <p className="text-sm" style={{ color: '#1A1917' }}>{exp.name}</p>
@@ -235,45 +260,18 @@ function SessionComplete({ session, moments, experiments, initialTags, onSubmit 
         </div>
       )}
 
-      {/* Reflection */}
-      {nudgeQuestions.length > 0 && (
-        <div className="card p-5 mb-6">
-          <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Quick reflection</p>
-          {nudgeQuestions.map((q, i) => (
-            <div key={q.id} className={i < nudgeQuestions.length - 1 ? 'mb-4' : ''}>
-              <p className="text-sm mb-2" style={{ color: '#6B6A65' }}>{q.question}</p>
-              <div className="flex flex-wrap gap-1.5">
-                {q.options.map(opt => (
-                  <button
-                    key={opt}
-                    onClick={() => setReflections(prev => ({ ...prev, [q.id]: opt }))}
-                    className="px-2.5 py-1 rounded-full text-xs transition-all"
-                    style={{
-                      background: reflections[q.id] === opt ? '#BA7517' : '#F5F4F0',
-                      color: reflections[q.id] === opt ? '#FFFFFF' : '#6B6A65',
-                    }}
-                  >
-                    {opt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       <button
         onClick={handleSubmit}
         disabled={submitting}
         className="w-full py-3 rounded-component text-sm font-medium transition-opacity"
         style={{
-          background: '#BA7517',
+          background: '#7b9ce2',
           color: '#FFFFFF',
           opacity: submitting ? 0.6 : 1,
           cursor: submitting ? 'not-allowed' : 'pointer',
         }}
       >
-        {submitting ? 'Saving…' : 'Done — start new session →'}
+        {submitting ? 'Saving…' : 'Complete session'}
       </button>
     </div>
   );
@@ -357,8 +355,8 @@ function ExperimentUpdateCard({ exp, prevR, highlighted }) {
         <span
           className="text-xs px-1.5 py-0.5 rounded"
           style={{
-            background: r === null ? '#F5F4F0' : Math.abs(r) >= 0.4 ? '#D1F0E7' : '#F5E6C8',
-            color: r === null ? '#A09E99' : Math.abs(r) >= 0.4 ? '#1D9E75' : '#BA7517',
+            background: r === null ? '#F5F4F0' : Math.abs(r) >= 0.4 ? '#D1F0E7' : '#DDE8FA',
+            color: r === null ? '#A09E99' : Math.abs(r) >= 0.4 ? '#1D9E75' : '#7b9ce2',
             fontFamily: '"DM Mono", monospace',
           }}
         >
@@ -366,14 +364,14 @@ function ExperimentUpdateCard({ exp, prevR, highlighted }) {
         </span>
       </div>
       {diff !== null && (
-        <p className="text-xs mb-1" style={{ color: diff > 0 ? '#1D9E75' : '#993C1D' }}>
+        <p className="text-xs mb-1" style={{ color: diff > 0 ? '#1D9E75' : '#C24220' }}>
           {diff > 0 ? '↑' : '↓'} {Math.abs(diff).toFixed(3)} this session
         </p>
       )}
       <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: '#F5F4F0' }}>
         <div
           className="h-full rounded-full transition-all"
-          style={{ width: `${Math.min(Math.abs(r || 0) * 100, 100)}%`, background: '#BA7517' }}
+          style={{ width: `${Math.min(Math.abs(r || 0) * 100, 100)}%`, background: '#7b9ce2' }}
         />
       </div>
       <p className="text-xs mt-1" style={{ color: '#6B6A65' }}>{interp(r)}</p>
@@ -600,10 +598,9 @@ export default function SessionView() {
   const chartData = {
     labels: arcLabels,
     datasets: [{
-      label: 'This session',
       data: arcData,
-      borderColor: '#BA7517',
-      backgroundColor: 'rgba(186,117,23,0.08)',
+      borderColor: '#7b9ce2',
+      backgroundColor: 'rgba(123,156,226,0.08)',
       fill: true,
       tension: 0.35,
       borderWidth: 2,
@@ -648,7 +645,7 @@ export default function SessionView() {
             disabled={starting}
             className="px-8 py-3 rounded-component text-sm font-medium transition-opacity"
             style={{
-              background: '#BA7517',
+              background: '#7b9ce2',
               color: '#FFFFFF',
               opacity: starting ? 0.6 : 1,
               cursor: starting ? 'not-allowed' : 'pointer',
@@ -657,11 +654,8 @@ export default function SessionView() {
             {starting ? 'Starting…' : 'Start session'}
           </button>
           {cameraError && (
-            <p className="text-sm mt-4" style={{ color: '#993C1D' }}>Camera error: {cameraError}</p>
+            <p className="text-sm mt-4" style={{ color: '#C24220' }}>Camera error: {cameraError}</p>
           )}
-          <p className="text-xs mt-6" style={{ color: '#A09E99' }}>
-            or run <code style={{ fontFamily: '"DM Mono", monospace' }}>python tracker/main.py</code> in your terminal
-          </p>
         </div>
       </>
     );
@@ -757,7 +751,7 @@ export default function SessionView() {
                   <button
                     onClick={stopTracking}
                     className="px-3 py-1 rounded-full text-xs font-medium transition-opacity hover:opacity-80"
-                    style={{ background: '#993C1D', color: '#FFFFFF' }}
+                    style={{ background: '#C24220', color: '#FFFFFF' }}
                   >
                     Stop session
                   </button>
@@ -767,7 +761,7 @@ export default function SessionView() {
                     onClick={startTracking}
                     disabled={starting}
                     className="px-3 py-1 rounded-full text-xs font-medium transition-opacity hover:opacity-80"
-                    style={{ background: '#BA7517', color: '#FFFFFF', opacity: starting ? 0.6 : 1 }}
+                    style={{ background: '#7b9ce2', color: '#FFFFFF', opacity: starting ? 0.6 : 1 }}
                   >
                     {starting ? 'Starting…' : 'Start browser tracking'}
                   </button>
@@ -801,7 +795,7 @@ export default function SessionView() {
                 <p className="text-sm font-medium" style={{ color: '#1A1917' }}>Focus arc</p>
                 <div className="flex items-center gap-4 text-xs" style={{ color: '#A09E99' }}>
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-6 h-0.5 rounded" style={{ background: '#BA7517' }} />
+                    <span className="inline-block w-6 h-0.5 rounded" style={{ background: '#7b9ce2' }} />
                     this session
                   </span>
                 </div>
@@ -834,11 +828,11 @@ export default function SessionView() {
                       onClick={() => toggleTag(tag)}
                       className="px-3 py-1 rounded-full text-xs transition-all"
                       style={{
-                        background: active ? '#BA7517' : '#F5F4F0',
+                        background: active ? '#7b9ce2' : '#F5F4F0',
                         color: active ? '#FFFFFF' : '#6B6A65',
-                        border: inExperiment && !active ? '1px solid #BA7517' : '0.5px solid transparent',
+                        border: inExperiment && !active ? '1px solid #7b9ce2' : '0.5px solid transparent',
                         fontWeight: active ? 500 : 400,
-                        boxShadow: inExperiment && active ? '0 0 0 2px rgba(186,117,23,0.3)' : 'none',
+                        boxShadow: inExperiment && active ? '0 0 0 2px rgba(123,156,226,0.3)' : 'none',
                       }}
                     >
                       {tag.replace(/_/g, ' ')}
