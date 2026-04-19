@@ -86,17 +86,29 @@ function DayRow({ date, sessions, tags }) {
 
 function CalendarView({ sessions }) {
   const [selectedDate, setSelectedDate] = useState(null);
+  const now = new Date();
+  const [calYear, setCalYear] = useState(now.getFullYear());
+  const [calMonth, setCalMonth] = useState(now.getMonth());
 
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
-
-  const days = [];
-  for (let i = 34; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    days.push(d);
+  function prevMonth() {
+    if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11); }
+    else setCalMonth(m => m - 1);
+    setSelectedDate(null);
+  }
+  function nextMonth() {
+    const isCurrentMonth = calYear === now.getFullYear() && calMonth === now.getMonth();
+    if (isCurrentMonth) return;
+    if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0); }
+    else setCalMonth(m => m + 1);
+    setSelectedDate(null);
   }
 
+  const isCurrentMonth = calYear === now.getFullYear() && calMonth === now.getMonth();
+  const monthLabel = new Date(calYear, calMonth, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
+
+  // Build days for the displayed month
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const days = Array.from({ length: daysInMonth }, (_, i) => new Date(calYear, calMonth, i + 1));
   const firstDow = days[0].getDay();
   const padded = [...Array(firstDow).fill(null), ...days];
 
@@ -116,6 +128,12 @@ function CalendarView({ sessions }) {
 
   return (
     <div>
+      {/* Month navigation */}
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={prevMonth} className="px-2 py-1 rounded-component text-sm transition-opacity hover:opacity-60" style={{ background: '#F5F4F0', color: '#6B6A65' }}>←</button>
+        <span className="text-sm font-medium" style={{ color: '#1A1917' }}>{monthLabel}</span>
+        <button onClick={nextMonth} className="px-2 py-1 rounded-component text-sm transition-opacity hover:opacity-60" style={{ background: '#F5F4F0', color: isCurrentMonth ? '#D4D2CE' : '#6B6A65', cursor: isCurrentMonth ? 'default' : 'pointer' }}>→</button>
+      </div>
       <div className="grid grid-cols-7 mb-1">
         {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
           <div key={d} className="text-center py-1 text-xs" style={{ color: '#A09E99' }}>{d}</div>

@@ -158,7 +158,22 @@ function ExperimentDetail({ exp, sessions, onClose }) {
   return (
     <div className="card p-5" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 180px)' }}>
       {/* Header */}
-      <p className="font-lora text-lg mb-0.5" style={{ color: '#1A1917' }}>{exp.name}</p>
+      <div className="flex items-start justify-between gap-3 mb-0.5">
+        <p className="font-lora text-lg" style={{ color: '#1A1917' }}>{exp.name}</p>
+        {exp.closed_at ? (
+          <span className="text-xs px-2 py-1 rounded-full flex-shrink-0 mt-0.5" style={{ background: '#F5F4F0', color: '#A09E99' }}>
+            Closed {new Date(exp.closed_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+        ) : r !== null && onClose ? (
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1 rounded-full flex-shrink-0 mt-0.5 transition-opacity hover:opacity-70"
+            style={{ background: '#F5F4F0', color: '#6B6A65' }}
+          >
+            Close experiment
+          </button>
+        ) : null}
+      </div>
       {exp.description && <p className="text-sm mb-4" style={{ color: '#6B6A65' }}>{exp.description}</p>}
 
       {/* Plain-language headline */}
@@ -279,33 +294,21 @@ function ExperimentDetail({ exp, sessions, onClose }) {
         </div>
       )}
 
-      {/* Close / closed status */}
-      {exp.closed_at ? (
-        <div className="mt-5 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
-          <p className="text-xs" style={{ color: '#A09E99' }}>
-            Closed {new Date(exp.closed_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} · data preserved
-          </p>
-        </div>
-      ) : r !== null && onClose ? (
-        <div className="mt-5 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
-          <button
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded-component transition-opacity hover:opacity-70"
-            style={{ background: '#F5F4F0', color: '#6B6A65' }}
-          >
-            Close experiment
-          </button>
-          <p className="text-xs mt-1.5" style={{ color: '#A09E99' }}>
-            Frees a slot for a new experiment. Analysis results are preserved.
-          </p>
-        </div>
-      ) : !exp.closed_at && r === null ? (
-        <div className="mt-5 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
+      {/* Close hint when not yet closeable */}
+      {!exp.closed_at && r === null && (
+        <div className="mt-4 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
           <p className="text-xs" style={{ color: '#A09E99' }}>
             Can be closed once you have data from both present and absent sessions.
           </p>
         </div>
-      ) : null}
+      )}
+      {!exp.closed_at && r !== null && (
+        <div className="mt-4 pt-4" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
+          <p className="text-xs" style={{ color: '#A09E99' }}>
+            Closing frees a slot for a new experiment. Analysis results are preserved.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
