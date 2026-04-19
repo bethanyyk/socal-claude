@@ -85,10 +85,11 @@ function DayRow({ date, sessions, tags }) {
 }
 
 function CalendarView({ sessions }) {
+  const [selectedDate, setSelectedDate] = useState(null);
+
   const today = new Date();
   today.setHours(12, 0, 0, 0);
 
-  // Build a 5-week window (35 days ending today)
   const days = [];
   for (let i = 34; i >= 0; i--) {
     const d = new Date(today);
@@ -96,27 +97,27 @@ function CalendarView({ sessions }) {
     days.push(d);
   }
 
-  // Pad front to start on Sunday
-  const firstDow = days[0].getDay(); // 0=Sun
+  const firstDow = days[0].getDay();
   const padded = [...Array(firstDow).fill(null), ...days];
 
-  // Group sessions by date string
   const byDate = {};
   for (const s of sessions) {
     if (!byDate[s.date]) byDate[s.date] = [];
     byDate[s.date].push(s);
   }
 
-  // Chunk into weeks
   const weeks = [];
   for (let i = 0; i < padded.length; i += 7) weeks.push(padded.slice(i, i + 7));
 
-  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const selectedSessions = selectedDate ? (byDate[selectedDate] || []) : [];
+  const selectedLabel = selectedDate
+    ? new Date(selectedDate + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
+    : null;
 
   return (
     <div>
       <div className="grid grid-cols-7 mb-1">
-        {DAY_LABELS.map(d => (
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
           <div key={d} className="text-center py-1 text-xs" style={{ color: '#A09E99' }}>{d}</div>
         ))}
       </div>
@@ -130,35 +131,73 @@ function CalendarView({ sessions }) {
               ? Math.round(daySessions.reduce((a, s) => a + (s.avg_focus || 0), 0) / daySessions.length)
               : null;
             const isToday = day.toDateString() === new Date().toDateString();
+            const isSelected = dateStr === selectedDate;
 
             return (
-              <div
+              <button
                 key={di}
-                className="rounded-component flex flex-col items-center justify-center py-1.5"
+                onClick={() => setSelectedDate(isSelected ? null : dateStr)}
+                className="rounded-component flex flex-col items-center justify-center py-1.5 transition-all"
                 style={{
-                  background: avgScore !== null ? scoreColor(avgScore) + '22' : '#F5F4F0',
-                  border: isToday ? `1.5px solid #BA7517` : '1.5px solid transparent',
+                  background: isSelected ? '#1A1917' : avgScore !== null ? scoreColor(avgScore) + '22' : '#F5F4F0',
+                  border: isToday && !isSelected ? '1.5px solid #BA7517' : '1.5px solid transparent',
                   minHeight: '48px',
+                  cursor: daySessions.length > 0 ? 'pointer' : 'default',
                 }}
               >
-                <span className="text-xs leading-none mb-0.5" style={{ color: '#A09E99', fontFamily: '"DM Mono", monospace' }}>
+                <span className="text-xs leading-none mb-0.5" style={{ color: isSelected ? '#FFFFFF' : '#A09E99', fontFamily: '"DM Mono", monospace' }}>
                   {day.getDate()}
                 </span>
                 {avgScore !== null ? (
-                  <span className="text-xs font-medium leading-none" style={{ color: scoreColor(avgScore), fontFamily: '"DM Mono", monospace' }}>
+                  <span className="text-xs font-medium leading-none" style={{ color: isSelected ? '#FFFFFF' : scoreColor(avgScore), fontFamily: '"DM Mono", monospace' }}>
                     {avgScore}
                   </span>
                 ) : (
-                  <span className="text-xs leading-none" style={{ color: '#D4D2CE' }}>·</span>
+                  <span className="text-xs leading-none" style={{ color: isSelected ? '#666' : '#D4D2CE' }}>·</span>
                 )}
                 {daySessions.length > 1 && (
-                  <span className="text-xs leading-none mt-0.5" style={{ color: '#A09E99' }}>×{daySessions.length}</span>
+                  <span className="text-xs leading-none mt-0.5" style={{ color: isSelected ? '#CCC' : '#A09E99' }}>×{daySessions.length}</span>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
       ))}
+
+      {/* Day detail card */}
+      {selectedDate && (
+        <div className="mt-4 p-4 rounded-component" style={{ background: '#F5F4F0' }}>
+          <p className="text-xs font-medium mb-3" style={{ color: '#6B6A65' }}>{selectedLabel}</p>
+          {selectedSessions.length === 0 ? (
+            <p className="text-xs" style={{ color: '#A09E99' }}>No sessions on this day.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {selectedSessions.map(s => {
+                const score = s.avg_focus ? Math.round(s.avg_focus) : 0;
+                const duration = s.duration_seconds || 0;
+                const widthPct = Math.max(4, Math.min(100, duration / 36));
+                return (
+                  <Link
+                    key={s.id}
+                    href={`/session/${s.id}`}
+                    className="group relative inline-block"
+                    style={{ width: `${widthPct}%`, minWidth: '60px', maxWidth: '140px' }}
+                  >
+                    <div
+                      className="h-10 rounded-component flex items-center justify-center transition-opacity group-hover:opacity-80"
+                      style={{ background: scoreColor(score), opacity: 0.9 }}
+                    >
+                      <span className="text-white text-sm font-medium" style={{ fontFamily: '"DM Mono", monospace' }}>
+                        {score}
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

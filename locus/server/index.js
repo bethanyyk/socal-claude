@@ -186,6 +186,23 @@ app.get('/api/experiments', (req, res) => {
   res.json({ experiments: getExperimentsWithStats() });
 });
 
+// GET /api/sessions/by-experiment/:tag
+app.get('/api/sessions/by-experiment/:tag', (req, res) => {
+  const { tag } = req.params;
+  const present = db.prepare(`
+    SELECT s.*, 'present' AS condition FROM sessions s
+    JOIN habit_tags ht ON s.id = ht.session_id
+    WHERE ht.tag = ? ORDER BY s.started_at DESC LIMIT 30
+  `).all(tag).map(s => ({ ...s, condition: 'present' }));
+  const absent = db.prepare(`
+    SELECT s.*, 'absent' AS condition FROM sessions s
+    JOIN experiment_absences ea ON s.id = ea.session_id
+    WHERE ea.tag = ? ORDER BY s.started_at DESC LIMIT 30
+  `).all(tag).map(s => ({ ...s, condition: 'absent' }));
+  const sessions = [...present, ...absent].sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+  res.json({ sessions });
+});
+
 // POST /api/experiments
 app.post('/api/experiments', (req, res) => {
   const { name, tag, description } = req.body;
