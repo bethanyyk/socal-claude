@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  background: #FFFFFF;
+  color: #1A1917;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-lora { font-family: 'Lora', Georgia, serif; }
+.font-mono { font-family: 'DM Mono', monospace; }
+
+/* Pulse animation for experiment cards when updated */
+@keyframes highlight-pulse {
+  0% { background-color: transparent; }
+  30% { background-color: #F5E6C8; }
+  100% { background-color: transparent; }
+}
+
+.pulse-amber {
+  animation: highlight-pulse 1.2s ease-out;
+}
+
+/* Smooth transitions */
+.card {
+  border-radius: 12px;
+  border: 0.5px solid rgba(0, 0, 0, 0.1);
+  background: #FFFFFF;
+}
+
+.surface {
+  background: #F5F4F0;
+  border-radius: 8px;
+}
+
+/* Score color utilities */
+.score-high { color: #1D9E75; }
+.score-mid { color: #BA7517; }
+.score-low { color: #993C1D; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }

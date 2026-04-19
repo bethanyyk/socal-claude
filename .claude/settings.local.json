@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"where node 2>&1\")",
+      "Bash(cmd /c \"node --version 2>&1\")",
+      "Bash(cmd /c \"npm --version 2>&1\")",
+      "Bash(python *)"
+    ]
+  }
+}
