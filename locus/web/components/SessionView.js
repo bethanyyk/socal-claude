@@ -16,6 +16,7 @@ import { useWs } from './WebSocketContext';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const COMMON_TAGS = ['coffee', 'exercise', 'good_sleep', 'late_screens', 'music', 'pomodoro', 'fasting', 'meditation'];
+const CAPTURE_INTERVAL_MS = 10_000;
 
 function scoreColor(score) {
   if (score >= 70) return '#1D9E75';
@@ -173,7 +174,108 @@ export default function SessionView() {
   const [tags, setTags] = useState([]);
   const [prevExperiments, setPrevExperiments] = useState({});
   const [highlightedExps, setHighlightedExps] = useState(new Set());
+
+  // Webcam tracking state
+  const [trackerActive, setTrackerActive] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+  const webcamDisplayRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const captureIntervalRef = useRef(null);
+  const trackingSessionIdRef = useRef(null);
+
   const sessionId = currentSession?.id;
+
+  // Attach stream to display video after trackerActive triggers a re-render
+  useEffect(() => {
+    if (trackerActive && webcamDisplayRef.current && streamRef.current) {
+      webcamDisplayRef.current.srcObject = streamRef.current;
+    }
+  }, [trackerActive]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      clearInterval(captureIntervalRef.current);
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  async function startTracking() {
+    setCameraError(null);
+    setStarting(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      streamRef.current = stream;
+
+      const newSessionId = crypto.randomUUID();
+      trackingSessionIdRef.current = newSessionId;
+
+      await fetch('/api/session/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: newSessionId }),
+      });
+
+      setTrackerActive(true);
+
+      // First capture after 2s (camera warm-up), then every 10s
+      setTimeout(() => captureAndSend(), 2000);
+      captureIntervalRef.current = setInterval(() => captureAndSend(), CAPTURE_INTERVAL_MS);
+    } catch (e) {
+      setCameraError(e.message || 'Could not access camera');
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  function captureAndSend() {
+    const video = webcamDisplayRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !trackingSessionIdRef.current) return;
+
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, 640, 480);
+
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result.split(',')[1];
+        fetch('/api/capture/frame', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: trackingSessionIdRef.current, image_b64: base64 }),
+        }).catch(err => console.error('Capture send failed:', err));
+      };
+      reader.readAsDataURL(blob);
+    }, 'image/jpeg', 0.85);
+  }
+
+  async function stopTracking() {
+    clearInterval(captureIntervalRef.current);
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+
+    if (trackingSessionIdRef.current) {
+      await fetch('/api/session/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: trackingSessionIdRef.current }),
+      }).catch(() => {});
+      trackingSessionIdRef.current = null;
+    }
+
+    setTrackerActive(false);
+  }
 
   // Fetch arc + moments when session changes
   useEffect(() => {
@@ -207,9 +309,8 @@ export default function SessionView() {
     fetch('/api/history')
       .then(r => r.json())
       .then(({ sessions }) => {
-        // Build a rough all-time average by minute position (simplified)
         if (!sessions?.length) return;
-        setGlobalArc([]); // placeholder — would need a dedicated endpoint
+        setGlobalArc([]);
       }).catch(() => {});
   }, []);
 
@@ -290,164 +391,229 @@ export default function SessionView() {
     },
   };
 
+  // Hidden canvas for frame capture (always mounted)
+  const hiddenCapture = <canvas ref={canvasRef} style={{ display: 'none' }} />;
+
   if (!currentSession) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-center">
-        <p className="font-lora text-2xl mb-2" style={{ color: '#1A1917' }}>No active session</p>
-        <p className="text-sm" style={{ color: '#6B6A65' }}>
-          Start the tracker to begin capturing your attention data.
-        </p>
-        <pre className="mt-4 p-3 text-xs rounded-component surface" style={{ color: '#6B6A65' }}>
-          python tracker/main.py --mock
-        </pre>
-      </div>
+      <>
+        {hiddenCapture}
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <p className="font-lora text-2xl mb-2" style={{ color: '#1A1917' }}>No active session</p>
+          <p className="text-sm mb-8" style={{ color: '#6B6A65' }}>
+            Start a session to begin capturing your attention data.
+          </p>
+          <button
+            onClick={startTracking}
+            disabled={starting}
+            className="px-8 py-3 rounded-component text-sm font-medium transition-opacity"
+            style={{
+              background: '#BA7517',
+              color: '#FFFFFF',
+              opacity: starting ? 0.6 : 1,
+              cursor: starting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {starting ? 'Starting…' : 'Start session'}
+          </button>
+          {cameraError && (
+            <p className="text-sm mt-4" style={{ color: '#993C1D' }}>
+              Camera error: {cameraError}
+            </p>
+          )}
+          <p className="text-xs mt-6" style={{ color: '#A09E99' }}>
+            or run <code style={{ fontFamily: '"DM Mono", monospace' }}>python tracker/main.py</code> in your terminal
+          </p>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-      {/* Left column */}
-      <div>
-        {/* Session header */}
-        <div className="card p-5 mb-4">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ background: isActive ? '#1D9E75' : '#A09E99' }}
-                />
-                <span className="text-sm font-medium" style={{ color: '#6B6A65' }}>
-                  {isActive ? 'Session active' : 'Session complete'}
-                </span>
-              </div>
-              <p className="text-xs" style={{ color: '#A09E99', fontFamily: '"DM Mono", monospace' }}>
-                {formatTime(currentSession.started_at)}
-                {currentSession.ended_at ? ` → ${formatTime(currentSession.ended_at)}` : ''}
-                {' · '}
-                {formatDuration(currentSession.duration_seconds)}
-              </p>
-            </div>
-            {score !== null && (
-              <div className="text-right">
-                <p
-                  className="font-lora font-medium"
-                  style={{ fontSize: '2.5rem', lineHeight: 1, color: scoreColor(score) }}
-                >
-                  {score}
+    <>
+      {hiddenCapture}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+        {/* Left column */}
+        <div>
+          {/* Session header */}
+          <div className="card p-5 mb-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span
+                    className="w-2 h-2 rounded-full"
+                    style={{ background: isActive ? '#1D9E75' : '#A09E99' }}
+                  />
+                  <span className="text-sm font-medium" style={{ color: '#6B6A65' }}>
+                    {isActive ? 'Session active' : 'Session complete'}
+                  </span>
+                </div>
+                <p className="text-xs" style={{ color: '#A09E99', fontFamily: '"DM Mono", monospace' }}>
+                  {formatTime(currentSession.started_at)}
+                  {currentSession.ended_at ? ` → ${formatTime(currentSession.ended_at)}` : ''}
+                  {' · '}
+                  {formatDuration(currentSession.duration_seconds)}
                 </p>
-                <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>avg focus</p>
               </div>
+              <div className="flex flex-col items-end gap-2">
+                {trackerActive && (
+                  <button
+                    onClick={stopTracking}
+                    className="px-3 py-1 rounded-full text-xs font-medium transition-opacity hover:opacity-80"
+                    style={{ background: '#993C1D', color: '#FFFFFF' }}
+                  >
+                    Stop session
+                  </button>
+                )}
+                {!trackerActive && isActive && (
+                  <button
+                    onClick={startTracking}
+                    disabled={starting}
+                    className="px-3 py-1 rounded-full text-xs font-medium transition-opacity hover:opacity-80"
+                    style={{ background: '#BA7517', color: '#FFFFFF', opacity: starting ? 0.6 : 1 }}
+                  >
+                    {starting ? 'Starting…' : 'Start browser tracking'}
+                  </button>
+                )}
+                {score !== null && (
+                  <div className="text-right">
+                    <p
+                      className="font-lora font-medium"
+                      style={{ fontSize: '2.5rem', lineHeight: 1, color: scoreColor(score) }}
+                    >
+                      {score}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: '#A09E99' }}>avg focus</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            {currentSession.peak_focus && (
+              <p className="text-xs mt-2" style={{ color: '#6B6A65' }}>
+                Peak: <span style={{ fontFamily: '"DM Mono", monospace', color: '#1A1917' }}>{currentSession.peak_focus}</span>
+                {' · '}
+                Captures: <span style={{ fontFamily: '"DM Mono", monospace', color: '#1A1917' }}>{currentSession.capture_count || 0}</span>
+              </p>
             )}
           </div>
-          {currentSession.peak_focus && (
-            <p className="text-xs mt-2" style={{ color: '#6B6A65' }}>
-              Peak: <span style={{ fontFamily: '"DM Mono", monospace', color: '#1A1917' }}>{currentSession.peak_focus}</span>
-              {' · '}
-              Captures: <span style={{ fontFamily: '"DM Mono", monospace', color: '#1A1917' }}>{currentSession.capture_count || 0}</span>
-            </p>
+
+          {/* Focus arc chart */}
+          {arc.length > 0 && (
+            <div className="card p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-medium" style={{ color: '#1A1917' }}>Focus arc</p>
+                <div className="flex items-center gap-4 text-xs" style={{ color: '#A09E99' }}>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-6 h-0.5 rounded" style={{ background: '#BA7517' }} />
+                    this session
+                  </span>
+                </div>
+              </div>
+              <div style={{ height: '140px' }}>
+                <Line data={chartData} options={chartOptions} />
+              </div>
+            </div>
           )}
+
+          {/* Key moments */}
+          {moments.length > 0 && (
+            <div className="card p-4 mb-4">
+              <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Key moments</p>
+              {moments.map((m, i) => <KeyMomentCard key={i} moment={m} />)}
+            </div>
+          )}
+
+          {/* Habit tagging */}
+          <div className="card p-4 mb-4">
+            <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Tag this session</p>
+            <div className="flex flex-wrap gap-2">
+              {COMMON_TAGS.map(tag => {
+                const active = tags.includes(tag);
+                const inExperiment = experiments.some(e => e.tag === tag);
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => toggleTag(tag)}
+                    className="px-3 py-1 rounded-full text-xs transition-all"
+                    style={{
+                      background: active ? '#BA7517' : '#F5F4F0',
+                      color: active ? '#FFFFFF' : '#6B6A65',
+                      border: inExperiment && !active ? '1px solid #BA7517' : '0.5px solid transparent',
+                      fontWeight: active ? 500 : 400,
+                      boxShadow: inExperiment && active ? '0 0 0 2px rgba(186,117,23,0.3)' : 'none',
+                    }}
+                  >
+                    {tag.replace(/_/g, ' ')}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Locus asks */}
+          <LocusNudge moments={moments} sessionAvg={score} />
         </div>
 
-        {/* Focus arc chart */}
-        {arc.length > 0 && (
-          <div className="card p-4 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-medium" style={{ color: '#1A1917' }}>Focus arc</p>
-              <div className="flex items-center gap-4 text-xs" style={{ color: '#A09E99' }}>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-6 h-0.5 rounded" style={{ background: '#BA7517' }} />
-                  this session
+        {/* Right column */}
+        <div>
+          {/* Live webcam feed */}
+          {trackerActive && (
+            <div className="card p-4 mb-4 overflow-hidden">
+              <p className="text-xs font-medium mb-2" style={{ color: '#A09E99', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Live feed
+              </p>
+              <video
+                ref={webcamDisplayRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full rounded"
+                style={{ aspectRatio: '4/3', objectFit: 'cover', background: '#1A1917' }}
+              />
+            </div>
+          )}
+
+          {/* Live capture */}
+          {latestCapture && (
+            <div className="card p-4 mb-4">
+              <p className="text-xs font-medium mb-2" style={{ color: '#A09E99', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Latest reading
+              </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm" style={{ color: '#6B6A65' }}>
+                    {latestCapture.engagement_signal?.replace(/_/g, ' ')}
+                  </p>
+                  <p className="text-xs mt-0.5 italic" style={{ color: '#A09E99' }}>"{latestCapture.note}"</p>
+                </div>
+                <span
+                  className="font-mono text-2xl font-medium"
+                  style={{ color: scoreColor(latestCapture.focus_score) }}
+                >
+                  {latestCapture.focus_score}
                 </span>
               </div>
             </div>
-            <div style={{ height: '140px' }}>
-              <Line data={chartData} options={chartOptions} />
+          )}
+
+          {/* Experiment cards */}
+          {experiments.length > 0 && (
+            <div className="card p-4 mb-4">
+              <p className="text-xs font-medium mb-3" style={{ color: '#A09E99', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Experiments updated by this session
+              </p>
+              {experiments.map(exp => (
+                <ExperimentUpdateCard
+                  key={exp.id}
+                  exp={exp}
+                  prevR={prevExperiments[exp.id] ?? null}
+                  highlighted={highlightedExps.has(exp.id)}
+                />
+              ))}
             </div>
-          </div>
-        )}
-
-        {/* Key moments */}
-        {moments.length > 0 && (
-          <div className="card p-4 mb-4">
-            <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Key moments</p>
-            {moments.map((m, i) => <KeyMomentCard key={i} moment={m} />)}
-          </div>
-        )}
-
-        {/* Habit tagging */}
-        <div className="card p-4 mb-4">
-          <p className="text-sm font-medium mb-3" style={{ color: '#1A1917' }}>Tag this session</p>
-          <div className="flex flex-wrap gap-2">
-            {COMMON_TAGS.map(tag => {
-              const active = tags.includes(tag);
-              const inExperiment = experiments.some(e => e.tag === tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => toggleTag(tag)}
-                  className="px-3 py-1 rounded-full text-xs transition-all"
-                  style={{
-                    background: active ? '#BA7517' : '#F5F4F0',
-                    color: active ? '#FFFFFF' : '#6B6A65',
-                    border: inExperiment && !active ? '1px solid #BA7517' : '0.5px solid transparent',
-                    fontWeight: active ? 500 : 400,
-                    boxShadow: inExperiment && active ? '0 0 0 2px rgba(186,117,23,0.3)' : 'none',
-                  }}
-                >
-                  {tag.replace(/_/g, ' ')}
-                </button>
-              );
-            })}
-          </div>
+          )}
         </div>
-
-        {/* Locus asks */}
-        <LocusNudge moments={moments} sessionAvg={score} />
       </div>
-
-      {/* Right column */}
-      <div>
-        {/* Live capture */}
-        {latestCapture && (
-          <div className="card p-4 mb-4">
-            <p className="text-xs font-medium mb-2" style={{ color: '#A09E99', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Latest reading
-            </p>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm" style={{ color: '#6B6A65' }}>
-                  {latestCapture.engagement_signal?.replace(/_/g, ' ')}
-                </p>
-                <p className="text-xs mt-0.5 italic" style={{ color: '#A09E99' }}>"{latestCapture.note}"</p>
-              </div>
-              <span
-                className="font-mono text-2xl font-medium"
-                style={{ color: scoreColor(latestCapture.focus_score) }}
-              >
-                {latestCapture.focus_score}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Experiment cards */}
-        {experiments.length > 0 && (
-          <div className="card p-4 mb-4">
-            <p className="text-xs font-medium mb-3" style={{ color: '#A09E99', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Experiments updated by this session
-            </p>
-            {experiments.map(exp => (
-              <ExperimentUpdateCard
-                key={exp.id}
-                exp={exp}
-                prevR={prevExperiments[exp.id] ?? null}
-                highlighted={highlightedExps.has(exp.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    </>
   );
 }

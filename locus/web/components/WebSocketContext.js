@@ -77,6 +77,11 @@ export function WebSocketProvider({ children }) {
           case 'experiments_updated':
             setExperiments(msg.experiments || []);
             break;
+          case 'reset':
+            setCurrentSession(null);
+            setLatestCapture(null);
+            setExperiments([]);
+            break;
         }
       } catch (e) {
         console.error('WS message parse error', e);

@@ -1,0 +1,18 @@
+node_modules/
+
+# Next.js build output
+locus/web/.next/
+
+# Lock files (generated, not committed)
+locus/server/package-lock.json
+locus/web/package-lock.json
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Environment variables
+.env
+.env.local
+.env*.local

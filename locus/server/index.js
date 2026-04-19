@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
+const Anthropic = require('@anthropic-ai/sdk');
 const {
   insertCapture,
   upsertSession,
@@ -19,7 +20,33 @@ const {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
+
+let anthropic;
+try {
+  anthropic = new Anthropic();
+} catch (e) {
+  console.warn('Anthropic client not initialized — set ANTHROPIC_API_KEY for browser-based tracking');
+}
+
+const FOCUS_SYSTEM_PROMPT = `You are an attention and focus analyzer. You receive a webcam image of someone \
+working at their computer. Analyze their posture, facial expression, body language, \
+and any visible behavioral signals to estimate their current focus level.
+
+Respond ONLY with a valid JSON object in this exact format, nothing else:
+{
+  "focus_score": <integer 0-100>,
+  "posture_quality": <"upright"|"neutral"|"slumped">,
+  "engagement_signal": <"deep_focus"|"active"|"distracted"|"away">,
+  "confidence": <float 0.0-1.0>,
+  "note": <one short phrase describing what you observed, max 8 words>
+}
+
+Scoring guide:
+- 85-100: Upright, leaning forward slightly, still, eyes on screen
+- 65-84: Generally attentive, minor fidgeting or neutral posture
+- 40-64: Visible distraction, slumped, looking away, restless
+- 0-39:  Not at desk, head down, clearly disengaged or absent`;
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
@@ -161,6 +188,72 @@ app.post('/api/experiments', (req, res) => {
   const experiments = getExperimentsWithStats();
   broadcast({ type: 'experiments_updated', experiments });
   res.json({ ok: true, experiments });
+});
+
+// POST /api/capture/frame — browser sends a base64 JPEG; server calls Claude and stores the result
+app.post('/api/capture/frame', async (req, res) => {
+  const { session_id, image_b64 } = req.body;
+  if (!session_id || !image_b64) return res.status(400).json({ error: 'Missing session_id or image_b64' });
+  if (!anthropic) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured on server' });
+
+  let scoreData;
+  try {
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 256,
+      system: FOCUS_SYSTEM_PROMPT,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image_b64 } },
+          { type: 'text', text: 'Analyze this webcam image and return the JSON score.' },
+        ],
+      }],
+    });
+    let text = message.content[0].text.trim();
+    if (text.includes('```')) text = text.split('```')[1].replace(/^json/, '').trim();
+    scoreData = JSON.parse(text);
+  } catch (e) {
+    console.error('Claude scoring error:', e.message);
+    return res.status(500).json({ error: 'Claude scoring failed: ' + e.message });
+  }
+
+  const ts = Date.now();
+  const payload = {
+    session_id,
+    timestamp: ts,
+    focus_score: scoreData.focus_score,
+    posture_quality: scoreData.posture_quality,
+    engagement_signal: scoreData.engagement_signal,
+    confidence: scoreData.confidence,
+    note: scoreData.note,
+  };
+
+  insertCapture(payload);
+
+  const allCaptures = db.prepare('SELECT focus_score FROM captures WHERE session_id = ?').all(session_id);
+  const scores = allCaptures.map(c => c.focus_score);
+  const avg_focus = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const peak_focus = Math.max(...scores);
+  const session = getSession(session_id);
+  const duration_seconds = session?.started_at ? Math.round((ts - session.started_at) / 1000) : 0;
+
+  upsertSession(session_id, {
+    avg_focus: Math.round(avg_focus * 10) / 10,
+    peak_focus,
+    capture_count: scores.length,
+    duration_seconds,
+  });
+
+  broadcast({ type: 'capture', data: payload });
+  res.json({ ok: true, score: scoreData });
+});
+
+// POST /api/reset — wipe all collected data
+app.post('/api/reset', (req, res) => {
+  db.exec('DELETE FROM captures; DELETE FROM sessions; DELETE FROM habit_tags; DELETE FROM experiments;');
+  broadcast({ type: 'reset' });
+  res.json({ ok: true });
 });
 
 const PORT = 3001;
